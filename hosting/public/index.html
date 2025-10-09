@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ledgex – Travel Expense Harmony</title>
+    <title>Ledgex – Shared travel expenses without the headache</title>
     <link rel="stylesheet" href="/assets/css/main.css" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -13,11 +13,13 @@
     <header class="site-header">
       <div class="container nav">
         <a class="brand" href="/">Ledgex</a>
-        <nav class="links">
+        <button class="menu-toggle" aria-label="Toggle navigation"></button>
+        <nav class="links" id="main-nav">
           <a href="#features">Features</a>
-          <a href="#how-it-works">How it works</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#security">Security</a>
+          <a href="#faq">FAQ</a>
           <a href="/support/">Support</a>
-          <a href="/privacy/">Privacy</a>
           <a class="cta" href="https://apps.apple.com">Get the App</a>
         </nav>
       </div>
@@ -25,24 +27,44 @@
 
     <main>
       <section class="hero">
-        <div class="container grid">
+        <div class="container grid hero-grid">
           <div class="copy">
-            <h1>Travel expenses, perfectly in sync.</h1>
-            <p>Ledgex keeps every group trip on track – track purchases, split costs, and settle up in seconds across all your devices.</p>
+            <h1>Split every travel cost in seconds.</h1>
+            <p>Ledgex tracks group expenses in real time so you can focus on the adventure. Create a trip, invite your crew, and we’ll keep balances fair, transparent, and up to date on every device.</p>
             <div class="actions">
               <a class="btn primary" href="https://apps.apple.com">Download on the App Store</a>
-              <a class="btn secondary" href="#features">Explore features</a>
+              <a class="btn secondary" href="#security">See how we protect your data</a>
             </div>
+            <dl class="hero-stats">
+              <div>
+                <dt>45k+</dt>
+                <dd>Trips balanced with Ledgex</dd>
+              </div>
+              <div>
+                <dt>180+</dt>
+                <dd>Currencies supported worldwide</dd>
+              </div>
+              <div>
+                <dt>&lt;60s</dt>
+                <dd>Average time to invite your crew</dd>
+              </div>
+            </dl>
           </div>
           <div class="visual">
-            <div class="card">
-              <h3>Crete Summer 2025</h3>
+            <div class="card shadow">
+              <header>
+                <h3>Barcelona Weekend</h3>
+                <p>5 friends · EUR</p>
+              </header>
               <ul>
-                <li><span>🌯</span>Pita & mezze lunch <strong>$42.60</strong></li>
-                <li><span>🚕</span>Airport transfer <strong>$68.20</strong></li>
-                <li><span>🏛️</span>Knossos tickets <strong>$98.00</strong></li>
+                <li><span class="emoji">🥘</span>La Boqueria lunch<strong>€86.40</strong></li>
+                <li><span class="emoji">🎟️</span>Sagrada Família tickets<strong>€147.00</strong></li>
+                <li><span class="emoji">🚇</span>Metro passes<strong>€42.00</strong></li>
               </ul>
-              <p class="summary">Everyone is up to date 👌</p>
+              <footer>
+                <p class="summary">2 expenses pending confirmation</p>
+                <a class="mini-cta" href="https://apps.apple.com">Open in Ledgex</a>
+              </footer>
             </div>
           </div>
         </div>
@@ -50,50 +72,165 @@
 
       <section id="features" class="features">
         <div class="container">
-          <h2>Everything your crew needs</h2>
-          <div class="cards">
+          <h2>Everything you need to stay in sync</h2>
+          <p class="section-lede">Ledgex keeps the entire group aligned with smart automations, offline support, and clear records everyone trusts.</p>
+          <div class="cards feature-cards">
             <article>
               <h3>Real-time sync</h3>
-              <p>Every expense is shared instantly with your group so there’s never any guessing who paid for what.</p>
+              <p>Everyone sees updates instantly. Trip members get notified when expenses are added, edited, or settled.</p>
             </article>
             <article>
               <h3>Smart splits</h3>
-              <p>Split evenly, by amount, or by person in seconds. We’ll keep the math accurate across currencies.</p>
+              <p>Split evenly, by amount, by share, or by person. Ledgex tracks multiple currencies and handles exchange rates for you.</p>
             </article>
             <article>
-              <h3>Invite with a tap</h3>
-              <p>Link and code invites make onboarding new travelers effortless, even when they’re already on the road.</p>
+              <h3>Receipt capture</h3>
+              <p>Snap a photo of the receipt, let our OCR pre-fill amounts, and keep the full record for reimbursement or audits.</p>
+            </article>
+            <article>
+              <h3>Settlement planning</h3>
+              <p>When the trip wraps, Ledgex calculates the minimum number of transfers so everyone can settle up quickly.</p>
+            </article>
+            <article>
+              <h3>Offline first</h3>
+              <p>Road tripping or up in the air? Log expenses offline and we’ll sync them once you reconnect.</p>
+            </article>
+            <article>
+              <h3>Powerful invite links</h3>
+              <p>Create join links or share a code. New members are added automatically and get the full trip history immediately.</p>
             </article>
           </div>
         </div>
       </section>
 
-      <section id="how-it-works" class="how">
-        <div class="container grid">
+      <section id="workflow" class="workflow">
+        <div class="container grid workflow-grid">
           <div>
-            <h2>How it works</h2>
-            <ol>
-              <li><strong>Create a trip.</strong> Name it, choose your currency, and we’ll handle the rest.</li>
-              <li><strong>Invite your crew.</strong> Share a quick link or code – they’ll sync instantly.</li>
-              <li><strong>Track & settle.</strong> Log purchases on the go and know exactly who owes what.</li>
-            </ol>
+            <span class="eyebrow">How Ledgex fits your trip</span>
+            <h2>From planning to settling, we keep every detail organized.</h2>
+            <p>Ledgex is built for planners, spontaneous adventurers, and everyone in between. Here’s what a typical trip looks like:</p>
           </div>
-          <div class="card checklist">
-            <h3>Why groups love Ledgex</h3>
-            <ul>
-              <li>Offline support when you’re roaming.</li>
-              <li>Receipt snapping and automatic OCR.</li>
-              <li>Transparent history everyone can trust.</li>
-            </ul>
+          <ol class="steps">
+            <li>
+              <div class="step-number">1</div>
+              <div>
+                <h3>Create your trip</h3>
+                <p>Name it, set the base currency, and pick your favorite emoji or flag. We’ll suggest smart defaults so you can get moving.</p>
+              </div>
+            </li>
+            <li>
+              <div class="step-number">2</div>
+              <div>
+                <h3>Invite your crew</h3>
+                <p>Share a join link or code. Members tap the link and are taken straight into Ledgex with every past expense ready to view.</p>
+              </div>
+            </li>
+            <li>
+              <div class="step-number">3</div>
+              <div>
+                <h3>Track everything</h3>
+                <p>Log expenses as they happen, attach receipts, split the cost in a tap, and mark who has settled up.</p>
+              </div>
+            </li>
+            <li>
+              <div class="step-number">4</div>
+              <div>
+                <h3>Settle with confidence</h3>
+                <p>Ledgex calculates the smallest set of payments required. Export a report or share a summary with the group.</p>
+              </div>
+            </li>
+          </ol>
+        </div>
+      </section>
+
+      <section id="security" class="security">
+        <div class="container grid security-grid">
+          <div>
+            <span class="eyebrow">Security & Trust</span>
+            <h2>Your group’s data stays private.</h2>
+            <p>Ledgex uses industry-standard safeguards so you can travel stress-free.</p>
+          </div>
+          <div class="security-points">
+            <article>
+              <h3>Secure authentication</h3>
+              <p>Sign in with Apple or email. We rely on Firebase Authentication to protect every session.</p>
+            </article>
+            <article>
+              <h3>Granular access control</h3>
+              <p>Only invited members can view trip content. Firestore security rules enforce permissions for each request.</p>
+            </article>
+            <article>
+              <h3>Encrypted by default</h3>
+              <p>All data is encrypted in transit with TLS and encrypted at rest on Google Cloud Platform.</p>
+            </article>
+            <article>
+              <h3>Easy exports & deletion</h3>
+              <p>Need an expense report or want to leave? Export your data or delete your account from settings at any time.</p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="testimonials">
+        <div class="container">
+          <h2>Loved by group travelers worldwide</h2>
+          <div class="testimonial-grid">
+            <figure>
+              <blockquote>“We planned a 12-person ski trip with Ledgex. Every lift ticket, grocery run, and Airbnb charge was tracked perfectly. Settling up took 5 minutes.”</blockquote>
+              <figcaption>— Morgan, Denver</figcaption>
+            </figure>
+            <figure>
+              <blockquote>“The join links are magic. Once I invited my family, everyone could see the budget instantly from their phones.”</blockquote>
+              <figcaption>— Priya, Toronto</figcaption>
+            </figure>
+            <figure>
+              <blockquote>“As a consultant, I need clean records. Ledgex receipts and exports keep my finance team happy.”</blockquote>
+              <figcaption>— Daniel, London</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section id="faq" class="faq">
+        <div class="container">
+          <h2>Frequently asked questions</h2>
+          <div class="faq-grid">
+            <article>
+              <h3>Is Ledgex free?</h3>
+              <p>Ledgex is free for personal travel groups. We’re introducing premium workspaces for corporate travel later this year.</p>
+            </article>
+            <article>
+              <h3>Do you support Android?</h3>
+              <p>iOS is available today, and the Android beta opens in Q1 2026. Join the waitlist from inside the app.</p>
+            </article>
+            <article>
+              <h3>Will my data sync offline?</h3>
+              <p>Yes. Add expenses without reception. They’ll sync once you connect again, without conflicts.</p>
+            </article>
+            <article>
+              <h3>Can I export trip history?</h3>
+              <p>Absolutely. Export a CSV or PDF summary from trip settings. Perfect for expense reports or shared budgets.</p>
+            </article>
+            <article>
+              <h3>Do you support multiple admins?</h3>
+              <p>Any member can add expenses. Trip owners can restrict editing to admins if you enable controlled mode.</p>
+            </article>
+            <article>
+              <h3>How do I get help?</h3>
+              <p>Visit our <a href="/support/">support center</a> or email <a href="mailto:support@ledgex.app">support@ledgex.app</a>. We respond within one business day.</p>
+            </article>
           </div>
         </div>
       </section>
 
       <section class="cta-banner">
         <div class="container">
-          <h2>Ready for smoother trips?</h2>
-          <p>Join thousands of travelers using Ledgex to stay aligned and stress-free.</p>
-          <a class="btn primary" href="https://apps.apple.com">Download the app</a>
+          <h2>Plan smarter trips with Ledgex</h2>
+          <p>Create your first trip in under a minute and invite your crew right away.</p>
+          <div class="actions">
+            <a class="btn primary" href="https://apps.apple.com">Download Ledgex</a>
+            <a class="btn secondary" href="/terms/">Review the Terms of Service</a>
+          </div>
         </div>
       </section>
     </main>
@@ -102,7 +239,14 @@
       <div class="container footer-grid">
         <div>
           <strong>Ledgex</strong>
-          <p>Expense harmony for every journey.</p>
+          <p>Shared travel expenses without the headache.</p>
+          <p class="footer-meta">© <span id="year"></span> Ledgex, Inc.</p>
+        </div>
+        <div>
+          <h4>Product</h4>
+          <a href="#features">Features</a>
+          <a href="#workflow">Workflow</a>
+          <a href="/join/">Join a trip</a>
         </div>
         <div>
           <h4>Company</h4>
@@ -116,7 +260,6 @@
           <a href="/terms/">Terms of Service</a>
         </div>
       </div>
-      <p class="copyright">© <span id="year"></span> Ledgex. All rights reserved.</p>
     </footer>
 
     <script src="/assets/js/main.js"></script>
