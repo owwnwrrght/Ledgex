@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Join your Ledgex group</title>
+    <link rel="stylesheet" href="/join/styles.css" />
+  </head>
+  <body>
+    <main>
+      <section class="card">
+        <h1>Join your Ledgex group</h1>
+        <p class="lede">We’re opening the Ledgex app for you. If nothing happens, use the buttons below.</p>
+        <div class="code" id="trip-code">••••••••••</div>
+        <button id="copy-button">Copy code</button>
+        <a class="cta" id="open-app" href="#">Open in Ledgex</a>
+        <a class="cta secondary" id="download-app" href="https://apps.apple.com">Get Ledgex from the App Store</a>
+      </section>
+      <p class="footer">Trouble opening the app? Share this code with your group organizer or download Ledgex from the App Store.</p>
+    </main>
+
+    <script>
+      const params = new URLSearchParams(window.location.search);
+      const tripCode = params.get('code') || 'Unknown';
+      const codeElement = document.getElementById('trip-code');
+      const copyButton = document.getElementById('copy-button');
+      const openAppLink = document.getElementById('open-app');
+      const downloadLink = document.getElementById('download-app');
+
+      codeElement.textContent = tripCode.toUpperCase();
+      const deepLink = `ledgex://join?code=${tripCode}`;
+      openAppLink.href = deepLink;
+
+      copyButton.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(tripCode);
+          copyButton.textContent = 'Copied!';
+          setTimeout(() => (copyButton.textContent = 'Copy code'), 2000);
+        } catch (err) {
+          copyButton.textContent = 'Copy failed';
+        }
+      });
+
+      const attemptOpen = () => {
+        window.location.href = deepLink;
+      };
+
+      const isAppleDevice = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
+      if (isAppleDevice) {
+        setTimeout(attemptOpen, 400);
+      }
+
+      openAppLink.addEventListener('click', (event) => {
+        event.preventDefault();
+        attemptOpen();
+      });
+
+      downloadLink.href = 'https://apps.apple.com';
+
+    </script>
+  </body>
+</html>

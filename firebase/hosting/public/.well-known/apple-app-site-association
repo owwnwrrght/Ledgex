@@ -1,0 +1,11 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "W79P2M53MN.com.owenwright.Ledgex",
+        "paths": ["/join/*"]
+      }
+    ]
+  }
+}
