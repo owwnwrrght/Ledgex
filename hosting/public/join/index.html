@@ -19,56 +19,6 @@
       <p class="footer">Trouble opening the app? Share this code with your group organizer or download Ledgex from the App Store.</p>
     </main>
 
-    <script>
-      // Extract trip code from either path (/join/ABC123) or query param (?code=ABC123)
-      function getTripCode() {
-        // Try path-based format first: /join/ABC123
-        const pathMatch = window.location.pathname.match(/\/join\/([A-Za-z0-9]+)/);
-        if (pathMatch && pathMatch[1]) {
-          return pathMatch[1];
-        }
-
-        // Fall back to query parameter: ?code=ABC123
-        const params = new URLSearchParams(window.location.search);
-        return params.get('code') || 'Unknown';
-      }
-
-      const tripCode = getTripCode();
-      const codeElement = document.getElementById('trip-code');
-      const copyButton = document.getElementById('copy-button');
-      const openAppLink = document.getElementById('open-app');
-      const downloadLink = document.getElementById('download-app');
-
-      codeElement.textContent = tripCode.toUpperCase();
-      const deepLink = `ledgex://join?code=${tripCode}`;
-      openAppLink.href = deepLink;
-
-      copyButton.addEventListener('click', async () => {
-        try {
-          await navigator.clipboard.writeText(tripCode);
-          copyButton.textContent = 'Copied!';
-          setTimeout(() => (copyButton.textContent = 'Copy code'), 2000);
-        } catch (err) {
-          copyButton.textContent = 'Copy failed';
-        }
-      });
-
-      const attemptOpen = () => {
-        window.location.href = deepLink;
-      };
-
-      const isAppleDevice = /iphone|ipad|ipod/i.test(window.navigator.userAgent);
-      if (isAppleDevice) {
-        setTimeout(attemptOpen, 400);
-      }
-
-      openAppLink.addEventListener('click', (event) => {
-        event.preventDefault();
-        attemptOpen();
-      });
-
-      downloadLink.href = 'https://apps.apple.com';
-
-    </script>
+    <script src="/join/app.js" defer></script>
   </body>
 </html>
