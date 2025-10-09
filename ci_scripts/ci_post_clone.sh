@@ -3,25 +3,38 @@
 # Xcode Cloud post-clone script
 # This script runs after the repository is cloned in Xcode Cloud
 
-set -e  # Exit on any error
-
 echo "🚀 Starting Xcode Cloud post-clone setup..."
 
 # Print environment info
 echo "📍 Working directory: $(pwd)"
 echo "🔧 Xcode version: $(xcodebuild -version)"
 
-# Install CocoaPods if not already installed
+# Check if CocoaPods is available
 if ! command -v pod &> /dev/null; then
-    echo "📦 Installing CocoaPods..."
-    sudo gem install cocoapods
+    echo "⚠️ CocoaPods not found in PATH"
+    echo "📦 Attempting to install CocoaPods..."
+
+    # Try to install without sudo (Xcode Cloud doesn't have sudo access)
+    if gem install cocoapods --user-install 2>/dev/null; then
+        echo "✅ CocoaPods installed successfully"
+        # Add user gems to PATH
+        export PATH="$HOME/.gem/ruby/2.6.0/bin:$PATH"
+    else
+        echo "❌ Failed to install CocoaPods, but continuing..."
+        echo "ℹ️  CocoaPods should be pre-installed in Xcode Cloud"
+    fi
 else
     echo "✅ CocoaPods already installed: $(pod --version)"
 fi
 
 # Install pod dependencies
 echo "📦 Installing CocoaPods dependencies..."
-pod install
+if pod install; then
+    echo "✅ Pod install successful"
+else
+    echo "❌ Pod install failed with exit code $?"
+    exit 1
+fi
 
 # Handle GoogleService-Info.plist for CI
 # Since this file is gitignored, we need to provide it for the build
