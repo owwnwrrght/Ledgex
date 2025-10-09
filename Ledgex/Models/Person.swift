@@ -7,9 +7,10 @@ struct Person: Identifiable, Codable, Hashable {
     var totalOwed: Decimal = .zero
     var isManuallyAdded: Bool = false  // True for people without the app
     var hasCompletedExpenses: Bool = false
-    
+    var firebaseUID: String? = nil  // Firebase Auth UID for users with accounts
+
     // Firebase properties (not stored in local cache)
     enum CodingKeys: String, CodingKey {
-        case id, name, totalPaid, totalOwed, isManuallyAdded, hasCompletedExpenses
+        case id, name, totalPaid, totalOwed, isManuallyAdded, hasCompletedExpenses, firebaseUID
     }
 }

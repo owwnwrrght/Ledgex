@@ -26,6 +26,12 @@ class TripListViewModel: ObservableObject {
         self.dataStore = dataStore ?? FirebaseManager.shared
         self.trips = DataManager.shared.loadTrips()
 
+        let signInObserver = NotificationCenter.default.addObserver(forName: .ledgexUserDidSignIn, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                print("🔔 [TripListViewModel] Received sign-in notification, syncing trips...")
+                await self?.syncTripsFromFirebase()
+            }
+        }
         let signOutObserver = NotificationCenter.default.addObserver(forName: .ledgexUserDidSignOut, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.handleSignedOut()
@@ -36,7 +42,7 @@ class TripListViewModel: ObservableObject {
                 self?.handleSignedOut()
             }
         }
-        notificationObservers.append(contentsOf: [signOutObserver, deleteObserver])
+        notificationObservers.append(contentsOf: [signInObserver, signOutObserver, deleteObserver])
 
         // Sync trips from Firestore when initialized
         Task { [weak self] in
@@ -61,9 +67,35 @@ class TripListViewModel: ObservableObject {
                 print("📥 [TripSync] Syncing \(remoteTrips.count) trips from Firestore")
                 print("📥 [TripSync] Remote trip codes: \(remoteTrips.map { $0.code })")
 
-                // Merge with local trips
+                // Merge with local trips and migrate old data
                 var mergedTrips = trips
-                for remoteTrip in remoteTrips {
+                for var remoteTrip in remoteTrips {
+                    // Migration: Update people with Firebase UIDs if they match current user
+                    var needsMigration = false
+                    if let currentProfile = profileManager.currentProfile {
+                        for (index, person) in remoteTrip.people.enumerated() {
+                            // If this person matches the current user's profile but doesn't have a firebaseUID
+                            if person.id == currentProfile.id && person.firebaseUID == nil {
+                                print("🔄 [Migration] Adding Firebase UID to person \(person.name) in trip \(remoteTrip.code)")
+                                remoteTrip.people[index].firebaseUID = currentProfile.firebaseUID
+                                needsMigration = true
+                            }
+                        }
+                    }
+
+                    // If we updated any people, save the trip back to Firestore
+                    if needsMigration {
+                        print("💾 [Migration] Saving migrated trip \(remoteTrip.code) to Firestore...")
+                        do {
+                            let updatedTrip = try await firebase.saveTrip(remoteTrip)
+                            remoteTrip = updatedTrip
+                            print("✅ [Migration] Successfully migrated trip \(remoteTrip.code)")
+                        } catch {
+                            print("⚠️ [Migration] Failed to save migrated trip: \(error)")
+                            // Continue with the un-migrated trip
+                        }
+                    }
+
                     if let localIndex = mergedTrips.firstIndex(where: { $0.id == remoteTrip.id }) {
                         // Compare modification dates and keep the newer one
                         if remoteTrip.lastModified > mergedTrips[localIndex].lastModified {

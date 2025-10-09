@@ -5,24 +5,60 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    match /users/{userId} {
-      allow create: if isSignedIn() && userId == request.auth.uid;
-      allow read, update, delete: if isSignedIn() && userId == request.auth.uid;
+    // Helper function to check if user has access to a trip code
+    function userHasTripCode(tripCode) {
+      let userDoc = get(/databases/$(database)/documents/users/$(request.auth.uid));
+      return isSignedIn() &&
+             userDoc != null &&
+             userDoc.data.tripCodes != null &&
+             tripCode in userDoc.data.tripCodes;
     }
 
+    // User profiles: /users/{uid}
+    // Each user can only read/write their own document
+    match /users/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+
+    // Trips: /trips/{tripId}
+    // Users can access trips they're members of (based on peopleIDs array OR trip code in user profile)
     match /trips/{tripId} {
-      // Maximally permissive for debugging - any authenticated user can do anything
-      allow read, write: if isSignedIn();
+      // Allow reading if:
+      // 1. User is in the peopleIDs array (new format with Firebase UIDs), OR
+      // 2. The trip code is in the user's profile tripCodes array (supports migration from old format)
+      allow read: if isSignedIn() && (
+        request.auth.uid in resource.data.peopleIDs ||
+        userHasTripCode(resource.data.code)
+      );
+
+      // Allow updating if user is in the peopleIDs array (both old and new) OR has trip code
+      allow update: if isSignedIn() && (
+        request.auth.uid in resource.data.peopleIDs ||
+        request.auth.uid in request.resource.data.peopleIDs ||
+        userHasTripCode(resource.data.code)
+      );
+
+      // Allow creating new trips (no existing resource to check)
+      allow create: if isSignedIn();
+
+      // Allow deleting if user is in the peopleIDs array OR has trip code
+      allow delete: if isSignedIn() && (
+        request.auth.uid in resource.data.peopleIDs ||
+        userHasTripCode(resource.data.code)
+      );
     }
 
-    match /ping/{documentId} {
-      allow read: if true;
-    }
-
+    // Test collection (used for connectivity checks)
     match /test/{documentId} {
       allow read, write: if isSignedIn();
     }
 
+    // Ping collection (public read for health checks)
+    match /ping/{documentId} {
+      allow read: if true;
+    }
+
+    // Deny all other access
     match /{document=**} {
       allow read, write: if false;
     }

@@ -178,6 +178,7 @@ class ProfileManager: ObservableObject {
         guard let profile = currentProfile else { return nil }
         var person = Person(name: profile.name)
         person.id = profile.id
+        person.firebaseUID = profile.firebaseUID
         return person
     }
     

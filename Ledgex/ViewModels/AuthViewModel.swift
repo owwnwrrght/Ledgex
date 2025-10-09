@@ -8,6 +8,7 @@ import UIKit
 import Combine
 
 extension Notification.Name {
+    static let ledgexUserDidSignIn = Notification.Name("LedgexUserDidSignIn")
     static let ledgexUserDidSignOut = Notification.Name("LedgexUserDidSignOut")
     static let ledgexUserDidDeleteAccount = Notification.Name("LedgexUserDidDeleteAccount")
 }
@@ -653,6 +654,10 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
            !appleProvidedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             await updateFirebaseDisplayName(for: authResult.user, to: appleProvidedName)
         }
+
+        // Post notification to trigger trip sync and other post-signin tasks
+        print("🔐 [Auth] ✅ Sign-in completed successfully")
+        NotificationCenter.default.post(name: .ledgexUserDidSignIn, object: nil)
     }
     
     @MainActor
@@ -958,6 +963,10 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
             ProfileManager.shared.setProfile(newProfile)
             try await FirebaseManager.shared.saveUserProfile(newProfile)
         }
+
+        // Post notification to trigger trip sync and other post-signin tasks
+        print("🔐 [Auth] ✅ Sign-in completed successfully")
+        NotificationCenter.default.post(name: .ledgexUserDidSignIn, object: nil)
     }
     
     private func randomNonceString(length: Int = 32) -> String {

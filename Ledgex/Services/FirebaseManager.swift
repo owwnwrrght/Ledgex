@@ -185,7 +185,7 @@ class FirebaseManager: ObservableObject, TripDataStore {
         
         // Create document data including people and expenses
         let peopleData = trip.people.map { person in
-            [
+            var personDict: [String: Any] = [
                 "id": person.id.uuidString,
                 "name": person.name,
                 "totalPaid": NSDecimalNumber(decimal: person.totalPaid).doubleValue,
@@ -193,6 +193,11 @@ class FirebaseManager: ObservableObject, TripDataStore {
                 "isManuallyAdded": person.isManuallyAdded,
                 "hasCompletedExpenses": person.hasCompletedExpenses
             ]
+            // Add firebaseUID if available
+            if let firebaseUID = person.firebaseUID {
+                personDict["firebaseUID"] = firebaseUID
+            }
+            return personDict
         }
         
         let expensesData = trip.expenses.map { expense in
@@ -234,7 +239,15 @@ class FirebaseManager: ObservableObject, TripDataStore {
             ]
         }
 
-        let peopleIDs = trip.people.map { $0.id.uuidString }
+        // Use Firebase UIDs for security checks (fallback to profile UUID for manually added users)
+        let peopleIDs = trip.people.compactMap { person -> String? in
+            // Prefer firebaseUID for users with accounts (for security rules)
+            if let firebaseUID = person.firebaseUID {
+                return firebaseUID
+            }
+            // Fallback to profile UUID for manually added users
+            return person.id.uuidString
+        }
 
         let tripData: [String: Any] = [
             "id": trip.id.uuidString,
@@ -467,13 +480,14 @@ class FirebaseManager: ObservableObject, TripDataStore {
                 guard let idString = personDict["id"] as? String,
                       let personId = UUID(uuidString: idString),
                       let name = personDict["name"] as? String else { return nil }
-                
+
                 var person = Person(name: name)
                 person.id = personId
                 person.totalPaid = Decimal(personDict["totalPaid"] as? Double ?? 0)
                 person.totalOwed = Decimal(personDict["totalOwed"] as? Double ?? 0)
                 person.isManuallyAdded = personDict["isManuallyAdded"] as? Bool ?? false
                 person.hasCompletedExpenses = personDict["hasCompletedExpenses"] as? Bool ?? false
+                person.firebaseUID = personDict["firebaseUID"] as? String
                 return person
             }
         }
@@ -712,7 +726,6 @@ class FirebaseManager: ObservableObject, TripDataStore {
         ]
 
         do {
-            try await migrateUserDocumentIfNeeded(firebaseUID: firebaseUID)
             let docRef = db.collection("users").document(firebaseUID)
             try await docRef.setData(profileData, merge: true)
             print("✅ User profile saved to Firestore")
@@ -725,23 +738,7 @@ class FirebaseManager: ObservableObject, TripDataStore {
         }
     }
 
-    private func migrateUserDocumentIfNeeded(firebaseUID: String) async throws {
-        let users = db.collection("users")
-        let directRef = users.document(firebaseUID)
-        let directSnap = try await directRef.getDocument()
-        if directSnap.exists {
-            return
-        }
-
-        let query = try await users.whereField("firebaseUID", isEqualTo: firebaseUID).limit(to: 1).getDocuments()
-        if let oldDoc = query.documents.first {
-            try await directRef.setData(oldDoc.data(), merge: true)
-            try await oldDoc.reference.delete()
-        }
-    }
-
     private func userDocumentSnapshot(for firebaseUID: String) async throws -> DocumentSnapshot? {
-        try await migrateUserDocumentIfNeeded(firebaseUID: firebaseUID)
         let doc = try await db.collection("users").document(firebaseUID).getDocument()
         return doc.exists ? doc : nil
     }
@@ -830,7 +827,6 @@ class FirebaseManager: ObservableObject, TripDataStore {
         print("🔗 [LinkTrip] Linking trip \(tripCode) to user \(firebaseUID)")
 
         do {
-            try await migrateUserDocumentIfNeeded(firebaseUID: firebaseUID)
             let docRef = db.collection("users").document(firebaseUID)
 
             // First check if the document exists
@@ -886,7 +882,6 @@ class FirebaseManager: ObservableObject, TripDataStore {
         }
 
         do {
-            try await migrateUserDocumentIfNeeded(firebaseUID: firebaseUID)
             let docRef = db.collection("users").document(firebaseUID)
             try await docRef.updateData([
                 "tripCodes": FieldValue.arrayRemove([tripCode]),
