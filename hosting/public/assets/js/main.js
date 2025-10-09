@@ -17,4 +17,46 @@ document.addEventListener('DOMContentLoaded', () => {
       });
     });
   }
+
+  const statsEndpoint = 'https://us-central1-splyt-4801c.cloudfunctions.net/publicStats';
+
+  const statElements = {
+    totalTrips: document.getElementById('stat-total-trips'),
+    activeTrips: document.getElementById('stat-active-trips'),
+    recentTrips: document.getElementById('stat-recent-trips'),
+    metricTotalTrips: document.getElementById('metric-total-trips'),
+    metricActiveTrips: document.getElementById('metric-active-trips'),
+    metricRecentTrips: document.getElementById('metric-recent-trips'),
+  };
+
+  const hasStatElements = Object.values(statElements).some((el) => el);
+
+  if (hasStatElements) {
+    fetch(statsEndpoint)
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`Stats request failed: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then((data) => {
+        const formatter = new Intl.NumberFormat('en-US', { notation: 'compact' });
+        const fullFormatter = new Intl.NumberFormat('en-US');
+
+        const total = Number(data.trips ?? 0);
+        const active = Number(data.activeTrips ?? 0);
+        const recent = Number(data.recentTrips ?? 0);
+
+        if (statElements.totalTrips) statElements.totalTrips.textContent = formatter.format(total);
+        if (statElements.activeTrips) statElements.activeTrips.textContent = formatter.format(active);
+        if (statElements.recentTrips) statElements.recentTrips.textContent = formatter.format(recent);
+
+        if (statElements.metricTotalTrips) statElements.metricTotalTrips.textContent = fullFormatter.format(total);
+        if (statElements.metricActiveTrips) statElements.metricActiveTrips.textContent = fullFormatter.format(active);
+        if (statElements.metricRecentTrips) statElements.metricRecentTrips.textContent = fullFormatter.format(recent);
+      })
+      .catch((error) => {
+        console.warn('Unable to load live stats', error);
+      });
+  }
 });

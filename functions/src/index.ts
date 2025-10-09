@@ -113,6 +113,53 @@ export const createTripInvite = onRequest({
   res.json(json);
 });
 
+export const publicStats = onRequest({
+  region: "us-central1",
+}, async (req, res) => {
+  if (req.method === "OPTIONS") {
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Access-Control-Allow-Methods", "GET");
+    res.set("Access-Control-Allow-Headers", "Content-Type");
+    res.status(204).send("");
+    return;
+  }
+
+  if (req.method !== "GET") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
+
+  try {
+    const now = admin.firestore.Timestamp.now();
+    const thirtyDaysAgo = admin.firestore.Timestamp.fromMillis(
+      now.toMillis() - 30 * 24 * 60 * 60 * 1000,
+    );
+
+    const tripsCountSnap = await db.collection("trips").count().get();
+    const recentTripsSnap = await db
+      .collection("trips")
+      .where("createdDate", ">=", thirtyDaysAgo)
+      .count()
+      .get();
+    const activeTripsSnap = await db
+      .collection("trips")
+      .where("phase", "==", "active")
+      .count()
+      .get();
+
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Cache-Control", "public, max-age=300");
+    res.json({
+      trips: tripsCountSnap.data().count ?? 0,
+      recentTrips: recentTripsSnap.data().count ?? 0,
+      activeTrips: activeTripsSnap.data().count ?? 0,
+    });
+  } catch (error) {
+    logger.error("Failed to fetch public stats", error as Error);
+    res.status(500).json({ error: "internal_error" });
+  }
+});
+
 export const joinTrip = onRequest({
   region: "us-central1",
 }, async (req, res) => {

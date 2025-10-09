@@ -152,6 +152,36 @@ body {
   font-size: 0.95rem;
 }
 
+.metrics {
+  padding: 48px 0 24px;
+}
+
+.metrics-grid {
+  display: grid;
+  gap: 24px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.metrics-grid article {
+  background: var(--surface);
+  border-radius: 22px;
+  padding: 28px;
+  border: 1px solid var(--border);
+  box-shadow: 0 20px 48px rgba(11, 20, 38, 0.1);
+}
+
+.metric-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--brand);
+  margin: 8px 0 12px;
+}
+
+.metric-caption {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
 .visual .card {
   background: var(--surface);
   border-radius: 26px;
