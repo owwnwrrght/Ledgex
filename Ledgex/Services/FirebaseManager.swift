@@ -8,7 +8,11 @@ import Combine
 
 private enum FirebaseManagerError: LocalizedError {
     case notAvailable
+    case notAuthenticated
     case memberNotFound
+    case invalidResponse
+    case api(message: String)
+    case tripNotFound
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +20,14 @@ private enum FirebaseManagerError: LocalizedError {
             return "Cloud sync is unavailable right now. Try again when you’re back online."
         case .memberNotFound:
             return "We couldn’t find your profile in this group. Please refresh and try again."
+        case .notAuthenticated:
+            return "Please sign in before joining a group."
+        case .invalidResponse:
+            return "We couldn’t verify the server response. Please try again."
+        case .api(let message):
+            return message
+        case .tripNotFound:
+            return "We couldn’t load the group after joining. Try again in a moment."
         }
     }
 }
@@ -43,6 +55,7 @@ class FirebaseManager: ObservableObject, TripDataStore {
     private let db = Firestore.firestore()
     private let auth = Auth.auth()
     private let storage = Storage.storage()
+    private let functionsBaseURL = URL(string: "https://us-central1-splyt-4801c.cloudfunctions.net")!
     
     @MainActor @Published var isFirebaseAvailable = false
     @MainActor @Published var syncStatus: SyncStatus = .idle
@@ -440,6 +453,76 @@ class FirebaseManager: ObservableObject, TripDataStore {
             print("❌ [Report] Failed to submit report: \(error)")
             throw error
         }
+    }
+
+    private struct JoinTripRequestPayload: Encodable {
+        let code: String
+    }
+
+    private struct JoinTripResponsePayload: Decodable {
+        let tripId: String
+        let tripName: String
+        let alreadyMember: Bool
+    }
+
+    private struct JoinTripErrorPayload: Decodable {
+        let error: String?
+        let message: String?
+        let code: String?
+    }
+
+    @MainActor
+    func joinTrip(code: String) async throws -> Trip {
+        guard isFirebaseAvailable else {
+            throw FirebaseManagerError.notAvailable
+        }
+
+        guard let currentUser = auth.currentUser else {
+            throw FirebaseManagerError.notAuthenticated
+        }
+
+        let sanitizedCode = code.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+
+        let token = try await currentUser.getIDToken()
+        var request = URLRequest(url: functionsBaseURL.appendingPathComponent("joinTrip"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = try JSONEncoder().encode(JoinTripRequestPayload(code: sanitizedCode))
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw FirebaseManagerError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            if let apiError = try? JSONDecoder().decode(JoinTripErrorPayload.self, from: data),
+               let message = apiError.message ?? apiError.error {
+                throw FirebaseManagerError.api(message: message)
+            } else {
+                throw FirebaseManagerError.api(message: "We couldn’t join that group. Please double-check the code.")
+            }
+        }
+
+        // Parse response for logging (not used currently)
+        if let responsePayload = try? JSONDecoder().decode(JoinTripResponsePayload.self, from: data) {
+            print("✅ [JoinTrip] Server joined trip \(responsePayload.tripName) (\(responsePayload.tripId)). Already member: \(responsePayload.alreadyMember)")
+        }
+
+        guard let trip = try await fetchTrip(by: sanitizedCode) else {
+            throw FirebaseManagerError.tripNotFound
+        }
+
+        if var profile = ProfileManager.shared.currentProfile {
+            if !profile.tripCodes.contains(sanitizedCode) {
+                profile.tripCodes.append(sanitizedCode)
+                profile.lastSynced = Date()
+                ProfileManager.shared.updateProfile(profile: profile)
+            }
+        }
+
+        return trip
     }
 
     @MainActor
@@ -1094,6 +1177,11 @@ class FirebaseManager: ObservableObject, TripDataStore {
 
     // MARK: - User Friendly Error Messages
     static func userFriendlyError(_ error: Error) -> String {
+        if let firebaseError = error as? FirebaseManagerError,
+           let description = firebaseError.errorDescription {
+            return description
+        }
+
         if let nsError = error as NSError? {
             switch nsError.code {
             case -1009, -1001:

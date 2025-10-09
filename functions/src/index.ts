@@ -4,6 +4,7 @@ import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import fetch from "node-fetch";
+import { randomUUID } from "crypto";
 
 admin.initializeApp();
 
@@ -18,6 +19,10 @@ interface PersonDoc {
   id?: string;
   name?: string;
   hasCompletedExpenses?: boolean;
+  totalPaid?: number;
+  totalOwed?: number;
+  isManuallyAdded?: boolean;
+  firebaseUID?: string;
 }
 
 interface ExpenseDoc {
@@ -106,6 +111,129 @@ export const createTripInvite = onRequest({
   logger.info("Generated group invite", { shortLink: json.shortLink, tripCode });
 
   res.json(json);
+});
+
+export const joinTrip = onRequest({
+  region: "us-central1",
+}, async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
+
+  try {
+    const authHeader = req.headers.authorization ?? req.headers.Authorization;
+    if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "unauthorized", message: "Missing or invalid authorization token." });
+      return;
+    }
+
+    const idToken = authHeader.slice("Bearer ".length);
+    let decodedToken: admin.auth.DecodedIdToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (error) {
+      logger.warn("joinTrip: invalid ID token", error as Error);
+      res.status(401).json({ error: "unauthorized", message: "Invalid authorization token." });
+      return;
+    }
+
+    const tripCode = (req.body?.code ?? req.body?.tripCode ?? req.body?.groupCode)
+      ?.toString()
+      .trim()
+      .toUpperCase();
+
+    if (!tripCode) {
+      res.status(400).json({ error: "invalid_code", message: "Group code is required." });
+      return;
+    }
+
+    const tripSnapshot = await db.collection("trips").where("code", "==", tripCode).limit(1).get();
+    if (tripSnapshot.empty) {
+      res.status(404).json({ error: "group_not_found", message: "We couldn't find a group with that code." });
+      return;
+    }
+
+    const tripDoc = tripSnapshot.docs[0];
+    const tripRef = tripDoc.ref;
+
+    const profileRef = db.collection("users").doc(decodedToken.uid);
+    const profileDoc = await profileRef.get();
+    const profileData = profileDoc.data() ?? {};
+
+    const personId = (profileData.id as string | undefined) ?? randomUUID();
+    const personName =
+      (profileData.name as string | undefined)?.trim() ??
+      decodedToken.name ??
+      "Ledgex Member";
+
+    const transactionResult = await db.runTransaction(async (transaction) => {
+      const snapshot = await transaction.get(tripRef);
+      if (!snapshot.exists) {
+        throw new Error("missing_trip");
+      }
+
+      const tripData = snapshot.data() as TripDoc & { peopleIDs?: string[] };
+      const people = Array.isArray(tripData.people) ? tripData.people : [];
+      const peopleIDs = Array.isArray(tripData.peopleIDs) ? tripData.peopleIDs : [];
+
+      const alreadyMember =
+        peopleIDs.includes(decodedToken.uid) ||
+        people.some((person) => person.id === personId || person.firebaseUID === decodedToken.uid);
+
+      if (!alreadyMember) {
+        const newPerson: PersonDoc = {
+          id: personId,
+          name: personName,
+          totalPaid: 0,
+          totalOwed: 0,
+          isManuallyAdded: false,
+          hasCompletedExpenses: false,
+          firebaseUID: decodedToken.uid,
+        };
+
+        transaction.update(tripRef, {
+          people: FieldValue.arrayUnion(newPerson),
+          peopleIDs: FieldValue.arrayUnion(decodedToken.uid),
+          lastModified: FieldValue.serverTimestamp(),
+        });
+      } else {
+        transaction.update(tripRef, {
+          lastModified: FieldValue.serverTimestamp(),
+        });
+      }
+
+      return {
+        alreadyMember,
+        tripName: tripData.name ?? "Group",
+      };
+    });
+
+    const profileUpdates: Record<string, unknown> = {
+      id: personId,
+      firebaseUID: decodedToken.uid,
+      name: personName,
+      tripCodes: FieldValue.arrayUnion(tripCode),
+      lastSynced: FieldValue.serverTimestamp(),
+    };
+
+    if (!profileDoc.exists) {
+      profileUpdates["dateCreated"] = FieldValue.serverTimestamp();
+      profileUpdates["preferredCurrency"] = "USD";
+    }
+
+    await profileRef.set(profileUpdates, { merge: true });
+
+    res.json({
+      tripId: tripRef.id,
+      tripCode,
+      tripName: transactionResult.tripName,
+      alreadyMember: transactionResult.alreadyMember,
+    });
+  } catch (error) {
+    logger.error("Failed to join trip", error as Error);
+    res.status(500).json({ error: "internal_error", message: "Something went wrong while joining the group." });
+  }
 });
 
 export const onTripUpdated = onDocumentUpdated("trips/{tripId}", async (event) => {

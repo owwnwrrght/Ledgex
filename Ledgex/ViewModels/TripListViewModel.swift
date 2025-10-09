@@ -182,44 +182,17 @@ class TripListViewModel: ObservableObject {
         defer { isLoading = false }
         
         do {
-            var trip = try await dataStore.fetchTrip(by: sanitizedCode)
-            
-            if var foundTrip = trip {
-                // Auto-add current user to the group if they have a profile and aren't already in it
-                if let currentUser = profileManager.createPersonFromProfile() {
-                    let userAlreadyExists = foundTrip.people.contains { $0.name.lowercased() == currentUser.name.lowercased() }
-                    
-                    if !userAlreadyExists {
-                        foundTrip.people.append(currentUser)
-                        
-                        // Save the complete trip with new user to Firebase
-                        do {
-                            let savedTrip = try await dataStore.saveTrip(foundTrip)
-                            foundTrip = savedTrip  // Use the authoritative copy
-                        } catch {
-                            await handleError(error, fallback: "We couldn't sync the new member yet. We'll keep trying in the background.")
-                        }
-                        
-                        trip = foundTrip
-                    }
-                }
-                
-                let tripToAdd = foundTrip
-                // Check if already joined
-                if !self.trips.contains(where: { $0.id == tripToAdd.id }) {
-                    self.trips.append(tripToAdd)
-                }
-                JoinCodeHistory.shared.add(code: tripToAdd.code)
+            let joinedTrip = try await dataStore.joinTrip(code: sanitizedCode)
 
-                // Link trip to user profile in Firestore
-                if let firebase = dataStore as? FirebaseManager {
-                    try? await firebase.addTripToUserProfile(tripCode: tripToAdd.code)
-                }
-
-                return (true, nil)
+            if let index = self.trips.firstIndex(where: { $0.id == joinedTrip.id }) {
+                self.trips[index] = joinedTrip
+            } else {
+                self.trips.append(joinedTrip)
             }
-            
-            return (false, "Group not found. Please check the code.")
+
+            JoinCodeHistory.shared.add(code: joinedTrip.code)
+
+            return (true, nil)
         } catch {
             let message = FirebaseManager.userFriendlyError(error)
             await handleError(error, fallback: message)

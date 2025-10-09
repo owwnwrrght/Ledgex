@@ -22,6 +22,13 @@ class MockTripDataStore: TripDataStore {
         return "MOCK" + String(Int.random(in: 100000...999999))
     }
 
+    func joinTrip(code: String) async throws -> Trip {
+        guard let trip = trips[code.uppercased()] else {
+            throw NSError(domain: "MockTripDataStore", code: 404, userInfo: [NSLocalizedDescriptionKey: "Trip not found"])
+        }
+        return trip
+    }
+
     func deleteTrip(_ trip: Trip) async throws {
         trips.removeValue(forKey: trip.code)
     }
