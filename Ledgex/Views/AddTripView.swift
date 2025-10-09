@@ -30,15 +30,24 @@ struct AddTripView: View {
                     }
                 }
                 ToolbarItem(placement: .primaryAction) {
-                    Button("Create") {
+                    Button {
                         if !name.isEmpty {
                             Task {
                                 await viewModel.createTrip(name: name, currency: defaultCurrency, flagEmoji: Trip.defaultFlag)
                                 dismiss()
                             }
                         }
+                    } label: {
+                        if viewModel.isLoading {
+                            ProgressView()
+                                .progressViewStyle(.circular)
+                        } else {
+                            Text("Create")
+                                .fontWeight(.semibold)
+                        }
                     }
                     .disabled(name.isEmpty || viewModel.isLoading)
+                    .accessibilityLabel("Create Group")
                 }
             }
         }

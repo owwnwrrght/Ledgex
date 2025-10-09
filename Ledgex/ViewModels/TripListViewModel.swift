@@ -126,6 +126,14 @@ class TripListViewModel: ObservableObject {
     }
     
     func createTrip(name: String, currency: Currency, flagEmoji: String? = nil) async {
+        guard !isLoading else {
+            print("⏳ [CreateTrip] Ignoring duplicate create request while loading")
+            return
+        }
+
+        isLoading = true
+        defer { isLoading = false }
+
         print("🆕 [CreateTrip] Starting trip creation: \(name)")
         let code = await dataStore.generateUniqueTripCode()
         print("🆕 [CreateTrip] Generated trip code: \(code)")
