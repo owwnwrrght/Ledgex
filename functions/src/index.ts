@@ -129,6 +129,8 @@ export const publicStats = onRequest({
     return;
   }
 
+  const statsDocRef = db.collection("stats").doc("public");
+
   try {
     const now = admin.firestore.Timestamp.now();
     const thirtyDaysAgo = admin.firestore.Timestamp.fromMillis(
@@ -147,15 +149,40 @@ export const publicStats = onRequest({
       .count()
       .get();
 
-    res.set("Access-Control-Allow-Origin", "*");
-    res.set("Cache-Control", "public, max-age=300");
-    res.json({
+    const payload = {
       trips: tripsCountSnap.data().count ?? 0,
       recentTrips: recentTripsSnap.data().count ?? 0,
       activeTrips: activeTripsSnap.data().count ?? 0,
-    });
+      updatedAt: now,
+    };
+
+    await statsDocRef.set(payload, { merge: true });
+
+    res.set("Access-Control-Allow-Origin", "*");
+    res.set("Cache-Control", "public, max-age=300");
+    res.json(payload);
   } catch (error) {
-    logger.error("Failed to fetch public stats", error as Error);
+    logger.error("Failed to fetch live stats, falling back to cached snapshot", error as Error);
+    try {
+      const snapshot = await statsDocRef.get();
+      if (snapshot.exists) {
+        const data = snapshot.data() ?? {};
+        res.set("Access-Control-Allow-Origin", "*");
+        res.set("Cache-Control", "public, max-age=60");
+        res.json({
+          trips: data.trips ?? 0,
+          recentTrips: data.recentTrips ?? 0,
+          activeTrips: data.activeTrips ?? 0,
+          updatedAt: data.updatedAt ?? null,
+          cached: true,
+        });
+        return;
+      }
+    } catch (innerError) {
+      logger.error("Failed to read cached stats", innerError as Error);
+    }
+
+    res.set("Access-Control-Allow-Origin", "*");
     res.status(500).json({ error: "internal_error" });
   }
 });

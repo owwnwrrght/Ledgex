@@ -40,16 +40,16 @@ document.addEventListener('DOMContentLoaded', () => {
         return response.json();
       })
       .then((data) => {
-        const formatter = new Intl.NumberFormat('en-US', { notation: 'compact' });
+        const compactFormatter = new Intl.NumberFormat('en-US', { notation: 'compact' });
         const fullFormatter = new Intl.NumberFormat('en-US');
 
         const total = Number(data.trips ?? 0);
         const active = Number(data.activeTrips ?? 0);
         const recent = Number(data.recentTrips ?? 0);
 
-        if (statElements.totalTrips) statElements.totalTrips.textContent = formatter.format(total);
-        if (statElements.activeTrips) statElements.activeTrips.textContent = formatter.format(active);
-        if (statElements.recentTrips) statElements.recentTrips.textContent = formatter.format(recent);
+        if (statElements.totalTrips) statElements.totalTrips.textContent = compactFormatter.format(total);
+        if (statElements.activeTrips) statElements.activeTrips.textContent = compactFormatter.format(active);
+        if (statElements.recentTrips) statElements.recentTrips.textContent = compactFormatter.format(recent);
 
         if (statElements.metricTotalTrips) statElements.metricTotalTrips.textContent = fullFormatter.format(total);
         if (statElements.metricActiveTrips) statElements.metricActiveTrips.textContent = fullFormatter.format(active);
@@ -57,6 +57,12 @@ document.addEventListener('DOMContentLoaded', () => {
       })
       .catch((error) => {
         console.warn('Unable to load live stats', error);
+        if (statElements.totalTrips) statElements.totalTrips.textContent = '—';
+        if (statElements.activeTrips) statElements.activeTrips.textContent = '—';
+        if (statElements.recentTrips) statElements.recentTrips.textContent = '—';
+        if (statElements.metricTotalTrips) statElements.metricTotalTrips.textContent = '—';
+        if (statElements.metricActiveTrips) statElements.metricActiveTrips.textContent = '—';
+        if (statElements.metricRecentTrips) statElements.metricRecentTrips.textContent = '—';
       });
   }
 });
