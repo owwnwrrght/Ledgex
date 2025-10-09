@@ -21,6 +21,32 @@ class MockTripDataStore: TripDataStore {
     func generateUniqueTripCode() async -> String {
         return "MOCK" + String(Int.random(in: 100000...999999))
     }
+
+    func deleteTrip(_ trip: Trip) async throws {
+        trips.removeValue(forKey: trip.code)
+    }
+
+    func leaveTrip(_ trip: Trip, profile: UserProfile) async throws {
+        guard var storedTrip = trips[trip.code] else {
+            return
+        }
+
+        storedTrip.people.removeAll { $0.id == profile.id }
+
+        for index in storedTrip.expenses.indices {
+            storedTrip.expenses[index].participants.removeAll { $0.id == profile.id }
+            storedTrip.expenses[index].customSplits.removeValue(forKey: profile.id)
+        }
+
+        storedTrip.settlementReceipts.removeAll { $0.fromPersonId == profile.id || $0.toPersonId == profile.id }
+        storedTrip.lastModified = Date()
+
+        if storedTrip.people.isEmpty {
+            trips.removeValue(forKey: trip.code)
+        } else {
+            trips[trip.code] = storedTrip
+        }
+    }
     
     func uploadReceiptImage(_ imageData: Data, for expenseId: String) async throws -> String {
         // Mock implementation - return a fake URL

@@ -4,6 +4,7 @@ struct ExpensesView: View {
     @ObservedObject var viewModel: ExpenseViewModel
     @State private var expenseToEdit: Expense?
     @State private var processingDone = false
+    @State private var reportTarget: ReportTarget?
     private var totalExpenses: Decimal {
         viewModel.expenses.reduce(Decimal.zero) { $0 + $1.amount }
     }
@@ -68,6 +69,9 @@ struct ExpensesView: View {
                 .overlay {
                     emptyStateView
                 }
+                .sheet(item: $reportTarget) { target in
+                    ReportContentSheet(target: target)
+                }
 
             doneButton
         }
@@ -84,7 +88,13 @@ struct ExpensesView: View {
             if !viewModel.expenses.isEmpty {
                 Section {
                     ForEach(viewModel.expenses) { expense in
-                        ExpenseRow(expense: expense, baseCurrency: viewModel.trip.baseCurrency, dataStore: FirebaseManager.shared)
+                        ExpenseRow(
+                            expense: expense,
+                            baseCurrency: viewModel.trip.baseCurrency,
+                            onReport: {
+                                reportTarget = ReportTarget(trip: viewModel.trip, contentType: .expenseName, contentText: expense.description, expense: expense)
+                            }
+                        )
                             .contentShape(Rectangle())
                             .onTapGesture {
                                 expenseToEdit = expense
@@ -189,7 +199,7 @@ struct ExpensesView: View {
 struct ExpenseRow: View {
     let expense: Expense
     let baseCurrency: Currency
-    let dataStore: TripDataStore
+    let onReport: () -> Void
 
     private var splitSummary: String {
         switch expense.splitType {
@@ -250,5 +260,12 @@ struct ExpenseRow: View {
                 .foregroundColor(.primary)
         }
         .padding(.vertical, 6)
+        .contextMenu {
+            Button(role: .destructive) {
+                onReport()
+            } label: {
+                Label("Report", systemImage: "flag")
+            }
+        }
     }
 }

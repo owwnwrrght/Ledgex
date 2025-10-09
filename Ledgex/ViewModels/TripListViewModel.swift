@@ -240,6 +240,18 @@ class TripListViewModel: ObservableObject {
             }
         }
     }
+
+    func removeTrip(_ trip: Trip) {
+        if let index = trips.firstIndex(where: { $0.id == trip.id }) {
+            trips.remove(at: index)
+        } else {
+            trips.removeAll { $0.code == trip.code }
+        }
+
+        if let selected = selectedTrip, selected.id == trip.id {
+            selectedTrip = nil
+        }
+    }
     
     func updateTrip(_ trip: Trip) {
         if let index = trips.firstIndex(where: { $0.id == trip.id }) {

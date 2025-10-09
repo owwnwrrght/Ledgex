@@ -310,6 +310,33 @@ class ExpenseViewModel: ObservableObject {
         }
     }
 
+    func leaveGroup() async -> Bool {
+        guard let profile = ProfileManager.shared.currentProfile else {
+            lastError = AppError(title: "Profile Required", message: "Sign in or create a profile before leaving the group.")
+            return false
+        }
+
+        do {
+            try await dataStore.leaveTrip(trip, profile: profile)
+            tripListViewModel?.removeTrip(trip)
+            return true
+        } catch {
+            await handleError(error, fallback: "We couldn't leave the group. Please try again.")
+            return false
+        }
+    }
+
+    func deleteGroupForEveryone() async -> Bool {
+        do {
+            try await dataStore.deleteTrip(trip)
+            tripListViewModel?.removeTrip(trip)
+            return true
+        } catch {
+            await handleError(error, fallback: "We couldn't delete the group. Please try again.")
+            return false
+        }
+    }
+
     // MARK: - Receipt Photo Management
     
     /// Upload receipt images using the improved batch upload method

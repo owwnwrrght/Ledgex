@@ -85,9 +85,15 @@ private extension ContentView {
     }
 
     func handleIncomingURL(_ url: URL) {
-        guard let deepLink = DeepLinkHandler.parse(url: url) else { return }
+        print("📱 ContentView: Received URL: \(url.absoluteString)")
+        guard let deepLink = DeepLinkHandler.parse(url: url) else {
+            print("❌ ContentView: Failed to parse deep link")
+            return
+        }
+        print("✅ ContentView: Successfully parsed deep link")
         switch deepLink {
         case .joinTrip(let code):
+            print("🎯 ContentView: Joining trip with code: \(code)")
             scheduleJoin(for: code)
         }
     }

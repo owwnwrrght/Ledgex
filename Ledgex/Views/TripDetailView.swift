@@ -168,9 +168,18 @@ struct TripSettingsView: View {
     @State private var isSaving = false
     @State private var showingFlagPicker = false
     @State private var showingNameAlert = false
+    @State private var showingLeaveConfirmation = false
+    @State private var showingDeleteConfirmation = false
+    @State private var activeGroupAction: GroupAction?
+    @State private var reportTarget: ReportTarget?
 
     private var shareURL: URL {
         inviteURL ?? TripLinkService.fallbackLink(for: viewModel.trip)
+    }
+
+    private enum GroupAction: Equatable {
+        case leave
+        case delete
     }
 
     init(viewModel: ExpenseViewModel) {
@@ -183,38 +192,10 @@ struct TripSettingsView: View {
     var body: some View {
         NavigationView {
             List {
-                Section("Group Details") {
-                    TextField("Group name", text: $editedName)
-
-                    Button {
-                        showingFlagPicker = true
-                    } label: {
-                        HStack {
-                            Text(editedFlag)
-                                .font(.title2)
-                            Text("Change Icon")
-                            Spacer()
-                            Image(systemName: "chevron.right")
-                                .foregroundColor(.secondary)
-                        }
-                    }
-
-                    Picker("Base Currency", selection: $editedCurrency) {
-                        ForEach(Currency.allCases, id: \.self) { currency in
-                            Text(currency.displayName).tag(currency)
-                        }
-                    }
-                }
-
-                Section {
-                    inviteLinkSection
-                    groupCodeSection
-                    qrCodeSection
-                } header: {
-                    Text("Invite Options")
-                } footer: {
-                    Text("Share the invite link in your group chat. Friends can also scan the QR code or manually enter the group code.")
-                }
+                groupDetailsSection
+                inviteOptionsSection
+                safetySection
+                groupActionsSection
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Group Settings")
@@ -232,7 +213,7 @@ struct TripSettingsView: View {
                             Text("Save")
                         }
                     }
-                    .disabled(isSaving)
+                    .disabled(isSaving || activeGroupAction != nil)
                 }
             }
         }
@@ -254,10 +235,112 @@ struct TripSettingsView: View {
         } message: {
             Text("Please provide a group name before saving.")
         }
+        .confirmationDialog("Leave Group?", isPresented: $showingLeaveConfirmation, titleVisibility: .visible) {
+            Button("Leave Group", role: .destructive) {
+                performGroupAction(.leave)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("You’ll lose access to this group on all of your devices. Other members will keep the group.")
+        }
+        .confirmationDialog("Delete Group for Everyone?", isPresented: $showingDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete Group", role: .destructive) {
+                performGroupAction(.delete)
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("This permanently removes the group and its data for every member. This action cannot be undone.")
+        }
         .alert(item: errorBinding) { alert in
             Alert(title: Text(alert.title), message: Text(alert.message), dismissButton: .default(Text("OK")) {
                 viewModel.lastError = nil
             })
+        }
+        .sheet(item: $reportTarget) { target in
+            ReportContentSheet(target: target)
+        }
+    }
+    
+    private var groupDetailsSection: some View {
+        Section {
+            TextField("Group name", text: $editedName)
+
+            Button {
+                showingFlagPicker = true
+            } label: {
+                HStack {
+                    Text(editedFlag)
+                        .font(.title2)
+                    Text("Change Icon")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Picker("Base Currency", selection: $editedCurrency) {
+                ForEach(Currency.allCases, id: \.self) { currency in
+                    Text(currency.displayName).tag(currency)
+                }
+            }
+        } header: {
+            Text("Group Details")
+        }
+    }
+
+    private var inviteOptionsSection: some View {
+        Section {
+            inviteLinkSection
+            groupCodeSection
+            qrCodeSection
+        } header: {
+            Text("Invite Options")
+        } footer: {
+            Text("Share the invite link in your group chat. Friends can also scan the QR code or manually enter the group code.")
+        }
+    }
+
+    private var safetySection: some View {
+        Section {
+            Button {
+                reportTarget = ReportTarget(trip: viewModel.trip, contentType: .tripName, contentText: viewModel.trip.name)
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "flag")
+                        .foregroundColor(.red)
+                    Text("Report Group Name")
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(Color(.tertiaryLabel))
+                }
+            }
+            .disabled(activeGroupAction != nil)
+        } header: {
+            Text("Safety & Reporting")
+        } footer: {
+            Text("Flag names that contain spam, hate speech, or sensitive info.")
+        }
+    }
+
+    private var groupActionsSection: some View {
+        Section {
+            Button(role: .destructive) {
+                showingLeaveConfirmation = true
+            } label: {
+                groupActionLabel(title: "Leave Group", systemImage: "person.crop.circle.fill.badge.minus", action: .leave)
+            }
+            .disabled(activeGroupAction != nil)
+
+            Button(role: .destructive) {
+                showingDeleteConfirmation = true
+            } label: {
+                groupActionLabel(title: "Delete Group For Everyone", systemImage: "trash", action: .delete)
+            }
+            .disabled(activeGroupAction != nil)
+        } header: {
+            Text("Group Actions")
+        } footer: {
+            Text("Leaving removes you from the group on every device. Deleting permanently removes the group and all data for everyone.")
         }
     }
 
@@ -447,6 +530,44 @@ struct TripSettingsView: View {
                     dismiss()
                 }
             }
+        }
+    }
+
+    private func performGroupAction(_ action: GroupAction) {
+        guard activeGroupAction == nil else { return }
+        activeGroupAction = action
+
+        Task {
+            let success: Bool
+            switch action {
+            case .leave:
+                success = await viewModel.leaveGroup()
+            case .delete:
+                success = await viewModel.deleteGroupForEveryone()
+            }
+
+            await MainActor.run {
+                activeGroupAction = nil
+                if success {
+                    dismiss()
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func groupActionLabel(title: String, systemImage: String, action: GroupAction) -> some View {
+        HStack(spacing: 12) {
+            if activeGroupAction == action {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .frame(width: 20, height: 20)
+            } else {
+                Image(systemName: systemImage)
+                    .frame(width: 20)
+            }
+            Text(title)
+            Spacer()
         }
     }
 

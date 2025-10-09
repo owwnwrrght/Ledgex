@@ -7,6 +7,8 @@ protocol TripDataStore {
     func fetchTrip(by code: String) async throws -> Trip?
     func syncTrip(_ trip: Trip) async throws -> Trip
     func generateUniqueTripCode() async -> String
+    func deleteTrip(_ trip: Trip) async throws
+    func leaveTrip(_ trip: Trip, profile: UserProfile) async throws
     
     // New: Receipt image management
     func uploadReceiptImage(_ imageData: Data, for expenseId: String) async throws -> String

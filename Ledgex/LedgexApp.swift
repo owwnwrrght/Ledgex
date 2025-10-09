@@ -46,11 +46,31 @@ struct LedgexApp: App {
     // register app delegate for Firebase setup
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var authViewModel = AuthViewModel()
-    
+
+    init() {
+        // Verify URL scheme configuration at startup
+        if let urlTypes = Bundle.main.infoDictionary?["CFBundleURLTypes"] as? [[String: Any]] {
+            print("📋 Registered URL Schemes:")
+            for urlType in urlTypes {
+                if let schemes = urlType["CFBundleURLSchemes"] as? [String] {
+                    print("   - \(schemes.joined(separator: ", "))")
+                }
+            }
+        } else {
+            print("⚠️  WARNING: No URL schemes registered!")
+        }
+
+        // Verify associated domains
+        print("📋 Bundle ID: \(Bundle.main.bundleIdentifier ?? "unknown")")
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(authViewModel)
+                .onOpenURL { url in
+                    print("🌐 LedgexApp: onOpenURL called with: \(url.absoluteString)")
+                }
         }
     }
 }

@@ -6,6 +6,20 @@ import FirebaseStorage
 import SwiftUI
 import Combine
 
+private enum FirebaseManagerError: LocalizedError {
+    case notAvailable
+    case memberNotFound
+
+    var errorDescription: String? {
+        switch self {
+        case .notAvailable:
+            return "Cloud sync is unavailable right now. Try again when you’re back online."
+        case .memberNotFound:
+            return "We couldn’t find your profile in this group. Please refresh and try again."
+        }
+    }
+}
+
 // Helper extension for async Firebase operations
 extension StorageReference {
     func putDataAsync(_ uploadData: Data, metadata: StorageMetadata?) async throws -> StorageMetadata {
@@ -320,6 +334,158 @@ class FirebaseManager: ObservableObject, TripDataStore {
             syncStatus = .error("Failed to save trip")
             throw error
         }
+    }
+
+    @MainActor
+    func deleteTrip(_ trip: Trip) async throws {
+        guard isFirebaseAvailable else {
+            throw FirebaseManagerError.notAvailable
+        }
+
+        print("🗑️ [Trip] Deleting trip \(trip.code) for everyone")
+
+        // Remove trip code from every known member profile
+        for person in trip.people {
+            guard let firebaseUID = person.firebaseUID else { continue }
+            let userRef = db.collection("users").document(firebaseUID)
+
+            do {
+                try await userRef.updateData([
+                    "tripCodes": FieldValue.arrayRemove([trip.code]),
+                    "lastSynced": Timestamp(date: Date())
+                ])
+                print("   • Removed trip \(trip.code) from user \(firebaseUID)")
+            } catch {
+                print("⚠️ [Trip] Failed to remove trip \(trip.code) from user \(firebaseUID): \(error)")
+            }
+        }
+
+        let docRef = db.collection("trips").document(trip.id.uuidString)
+
+        do {
+            try await docRef.delete()
+            print("✅ [Trip] Deleted trip document \(trip.code)")
+        } catch {
+            print("❌ [Trip] Failed to delete trip document \(trip.code): \(error)")
+            throw error
+        }
+
+        documentRefs.removeValue(forKey: trip.id.uuidString)
+
+        // Update local profile cache if needed
+        if var profile = ProfileManager.shared.currentProfile {
+            if profile.tripCodes.contains(trip.code) {
+                profile.tripCodes.removeAll { $0 == trip.code }
+                profile.lastSynced = Date()
+                ProfileManager.shared.updateProfile(profile: profile)
+            }
+        }
+    }
+
+    @MainActor
+    func submitContentReport(_ report: ContentReport) async throws {
+        guard isFirebaseAvailable else {
+            throw FirebaseManagerError.notAvailable
+        }
+
+        print("🚩 [Report] Submitting content report for \(report.contentType.rawValue)")
+
+        var data: [String: Any] = [
+            "id": report.id.uuidString,
+            "tripId": report.tripId.uuidString,
+            "tripCode": report.tripCode,
+            "tripName": report.tripName,
+            "contentType": report.contentType.rawValue,
+            "contentText": report.contentText,
+            "reason": report.reason.rawValue,
+            "status": report.status.rawValue,
+            "platform": report.platform,
+            "createdAt": Timestamp(date: report.createdAt)
+        ]
+
+        if let expenseId = report.expenseId {
+            data["expenseId"] = expenseId.uuidString
+        }
+
+        if let expenseDescription = report.expenseDescription {
+            data["expenseDescription"] = expenseDescription
+        }
+
+        if let reporterProfileId = report.reporterProfileId {
+            data["reporterProfileId"] = reporterProfileId.uuidString
+        }
+
+        if let reporterFirebaseUID = report.reporterFirebaseUID {
+            data["reporterFirebaseUID"] = reporterFirebaseUID
+        }
+
+        if let reporterName = report.reporterName {
+            data["reporterName"] = reporterName
+        }
+
+        if let additionalDetails = report.additionalDetails, !additionalDetails.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            data["additionalDetails"] = additionalDetails
+        }
+
+        if let appVersion = report.appVersion {
+            data["appVersion"] = appVersion
+        }
+
+        let docRef = db.collection("reports").document(report.id.uuidString)
+
+        do {
+            try await docRef.setData(data)
+            print("✅ [Report] Submitted report \(report.id)")
+        } catch {
+            print("❌ [Report] Failed to submit report: \(error)")
+            throw error
+        }
+    }
+
+    @MainActor
+    func leaveTrip(_ trip: Trip, profile: UserProfile) async throws {
+        guard isFirebaseAvailable else {
+            throw FirebaseManagerError.notAvailable
+        }
+
+        print("🚪 [Trip] \(profile.name) is leaving trip \(trip.code)")
+
+        var updatedTrip = trip
+
+        let personIndex = updatedTrip.people.firstIndex(where: { $0.id == profile.id }) ??
+        (profile.firebaseUID.flatMap { uid in
+            updatedTrip.people.firstIndex { $0.firebaseUID == uid }
+        })
+
+        guard let index = personIndex else {
+            print("⚠️ [Trip] Person not found in trip while leaving")
+            throw FirebaseManagerError.memberNotFound
+        }
+
+        let removedPerson = updatedTrip.people.remove(at: index)
+        print("   • Removed \(removedPerson.name) from participants")
+
+        // Remove user from all expenses and splits
+        for expenseIndex in updatedTrip.expenses.indices {
+            updatedTrip.expenses[expenseIndex].participants.removeAll { $0.id == removedPerson.id }
+            updatedTrip.expenses[expenseIndex].customSplits.removeValue(forKey: removedPerson.id)
+        }
+
+        updatedTrip.settlementReceipts.removeAll {
+            $0.fromPersonId == removedPerson.id || $0.toPersonId == removedPerson.id
+        }
+
+        updatedTrip.lastModified = Date()
+
+        if updatedTrip.people.isEmpty {
+            print("   • Trip has no members left after removal, deleting trip")
+            try await deleteTrip(updatedTrip)
+        } else {
+            _ = try await saveTrip(updatedTrip)
+        }
+
+        // Remove from the current user's profile (both remote and local)
+        try await removeTripFromUserProfile(tripCode: trip.code)
     }
 
     @MainActor

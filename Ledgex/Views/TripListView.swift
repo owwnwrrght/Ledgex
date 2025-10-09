@@ -44,7 +44,6 @@ struct TripListView: View {
                 }
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
             }
-            .onDelete(perform: viewModel.removeTrip)
         }
         .listStyle(.plain)
         .navigationTitle("Groups")
@@ -232,7 +231,6 @@ private struct TripSidebarView: View {
                         .tag(trip.id)
                         .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
                 }
-                .onDelete(perform: viewModel.removeTrip)
             }
             .listStyle(.sidebar)
             .navigationTitle("Groups")
