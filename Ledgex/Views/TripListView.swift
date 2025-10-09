@@ -3,7 +3,6 @@ import SwiftUI
 struct TripListView: View {
     @ObservedObject var viewModel: TripListViewModel
     @ObservedObject private var firebaseManager = FirebaseManager.shared
-    @ObservedObject private var profileManager = ProfileManager.shared
     @State private var showingAddTrip = false
     @State private var showingProfile = false
     @State private var joinTripCode = ""
@@ -50,6 +49,11 @@ struct TripListView: View {
         .listStyle(.plain)
         .navigationTitle("Groups")
         .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button(action: { showingProfile = true }) {
+                    Image(systemName: "person.circle.fill")
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Menu {
                     Button(action: { showingAddTrip = true }) {
@@ -74,6 +78,9 @@ struct TripListView: View {
         }
         .sheet(isPresented: $viewModel.showingJoinTrip) {
             JoinTripView(viewModel: viewModel)
+        }
+        .sheet(isPresented: $showingProfile) {
+            ProfileView()
         }
         .overlay {
             if viewModel.trips.isEmpty {
@@ -155,6 +162,191 @@ struct TripListView: View {
         case .error(_):
             Image(systemName: "exclamationmark.icloud")
                 .foregroundColor(.red)
+        }
+    }
+}
+
+struct TripSplitView: View {
+    @ObservedObject var viewModel: TripListViewModel
+    @Binding var showingProfile: Bool
+    @State private var selectedTripID: UUID?
+
+    var body: some View {
+        NavigationSplitView {
+            TripSidebarView(viewModel: viewModel, selectedTripID: $selectedTripID)
+        } detail: {
+            if let tripID = selectedTripID,
+               let trip = viewModel.trips.first(where: { $0.id == tripID }) {
+                TripDetailView(trip: trip, tripListViewModel: viewModel)
+            } else if let firstTrip = viewModel.trips.first {
+                TripDetailView(trip: firstTrip, tripListViewModel: viewModel)
+                    .task { selectedTripID = firstTrip.id }
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "person.3")
+                        .font(.system(size: 48))
+                        .foregroundColor(.secondary)
+                    Text("Select or create a group")
+                        .font(.headline)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button(action: { showingProfile = true }) {
+                    Image(systemName: "person.circle.fill")
+                }
+            }
+        }
+        .sheet(isPresented: $showingProfile) {
+            ProfileView()
+        }
+        .onAppear {
+            if selectedTripID == nil {
+                selectedTripID = viewModel.trips.first?.id
+            }
+        }
+        .onReceive(viewModel.$trips) { trips in
+            if let selected = selectedTripID, !trips.contains(where: { $0.id == selected }) {
+                selectedTripID = trips.first?.id
+            } else if selectedTripID == nil {
+                selectedTripID = trips.first?.id
+            }
+        }
+    }
+}
+
+private struct TripSidebarView: View {
+    @ObservedObject var viewModel: TripListViewModel
+    @ObservedObject private var firebaseManager = FirebaseManager.shared
+    @Binding var selectedTripID: UUID?
+    @State private var showingAddTrip = false
+
+    var body: some View {
+        ZStack {
+            List(selection: $selectedTripID) {
+                ForEach(viewModel.trips) { trip in
+                    TripRowView(trip: trip, syncStatus: firebaseManager.syncStatus, isFirebaseAvailable: firebaseManager.isFirebaseAvailable)
+                        .tag(trip.id)
+                        .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+                }
+                .onDelete(perform: viewModel.removeTrip)
+            }
+            .listStyle(.sidebar)
+            .navigationTitle("Groups")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Menu {
+                        Button(action: { showingAddTrip = true }) {
+                            Label("Create Group", systemImage: "plus.circle")
+                        }
+
+                        Button(action: { viewModel.showingJoinTrip = true }) {
+                            Label("Join Group", systemImage: "person.2")
+                        }
+                        .disabled(!firebaseManager.isFirebaseAvailable)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.title3)
+                    }
+                }
+            }
+            .safeAreaInset(edge: .bottom) {
+                if !firebaseManager.isFirebaseAvailable {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wifi.slash")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+
+                        Text("Offline mode - groups won't sync")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        Spacer()
+
+                        Button("Retry") {
+                            Task {
+                                await firebaseManager.checkFirebaseStatus()
+                            }
+                        }
+                        .font(.caption2)
+                        .foregroundColor(.orange)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(Color.orange.opacity(0.05))
+                }
+            }
+            .sheet(isPresented: $showingAddTrip) {
+                AddTripView(viewModel: viewModel)
+            }
+            .sheet(isPresented: $viewModel.showingJoinTrip) {
+                JoinTripView(viewModel: viewModel)
+            }
+
+            if viewModel.trips.isEmpty {
+                VStack(spacing: 24) {
+                    VStack(spacing: 16) {
+                        Image(systemName: "person.3.sequence")
+                            .font(.system(size: 64, weight: .ultraLight))
+                            .foregroundColor(.blue.opacity(0.6))
+
+                        Text("No groups yet")
+                            .font(.title3)
+                            .fontWeight(.medium)
+                        Text("Create a group to start tracking shared expenses, or join an existing one with a code.")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+
+                    VStack(spacing: 12) {
+                        Button(action: { showingAddTrip = true }) {
+                            HStack {
+                                Image(systemName: "plus.circle.fill")
+                                Text("Create Group")
+                            }
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: 280)
+                            .padding(.vertical, 14)
+                            .background(Color.blue)
+                            .cornerRadius(12)
+                        }
+
+                        if firebaseManager.isFirebaseAvailable {
+                            Button(action: { viewModel.showingJoinTrip = true }) {
+                                HStack {
+                                    Image(systemName: "person.2")
+                                    Text("Join Group")
+                                }
+                                .font(.subheadline)
+                                .foregroundColor(.blue)
+                                .frame(maxWidth: 240)
+                                .padding(.vertical, 12)
+                                .background(Color.blue.opacity(0.1))
+                                .cornerRadius(10)
+                            }
+                        }
+                    }
+                }
+                .padding()
+            }
+        }
+        .onAppear {
+            if selectedTripID == nil {
+                selectedTripID = viewModel.trips.first?.id
+            }
+        }
+        .onReceive(viewModel.$trips) { trips in
+            if let selected = selectedTripID, !trips.contains(where: { $0.id == selected }) {
+                selectedTripID = trips.first?.id
+            } else if selectedTripID == nil {
+                selectedTripID = trips.first?.id
+            }
         }
     }
 }

@@ -37,7 +37,11 @@ class ProfileManager: ObservableObject {
     }
     
     @MainActor func createProfile(name: String) {
-        currentProfile = UserProfile(name: name)
+        let profile = UserProfile(name: name)
+        currentProfile = profile
+        Task {
+            try? await FirebaseManager.shared.saveUserProfile(profile)
+        }
     }
 
     @MainActor func setProfile(_ profile: UserProfile) {

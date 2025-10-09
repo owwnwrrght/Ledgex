@@ -9,7 +9,6 @@ struct ItemizedExpenseView: View {
     
     @State private var description: String = ""
     @State private var selectedCurrency: Currency
-    @State private var selectedPayer: Person?
     @State private var items: [ReceiptItem]
     @State private var showingCurrencyPicker = false
     @State private var isProcessing = false
@@ -26,6 +25,7 @@ struct ItemizedExpenseView: View {
         _selectedCurrency = State(initialValue: defaultCurrency)
         _items = State(initialValue: ocrResult.items)
         _description = State(initialValue: ocrResult.merchantName ?? "Receipt from \(Date().formatted(date: .abbreviated, time: .omitted))")
+
     }
     
     var totalAmount: Decimal {
@@ -38,7 +38,7 @@ struct ItemizedExpenseView: View {
     
     var isValid: Bool {
         let hasSelectedItems = items.contains { !$0.selectedBy.isEmpty }
-        return hasSelectedItems && selectedPayer != nil && !description.isEmpty
+        return hasSelectedItems && currentUserPerson != nil && !description.isEmpty
     }
     
     var body: some View {
@@ -49,10 +49,26 @@ struct ItemizedExpenseView: View {
                     TextField("Description", text: $description)
                         .font(.body)
                     
-                    Picker("Paid by", selection: $selectedPayer) {
-                        Text("Choose who paid").tag(Optional<Person>.none)
-                        ForEach(viewModel.people) { person in
-                            Text(person.name).tag(Optional(person))
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Image(systemName: "person.circle")
+                            .foregroundColor(.secondary)
+                            .frame(width: 24)
+
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Paid by")
+                                .font(.subheadline)
+                                .foregroundColor(.secondary)
+                            Text(currentUserPerson?.name ?? "Your profile")
+                                .font(.body)
+                                .fontWeight(.semibold)
+                        }
+
+                        Spacer()
+
+                        if currentUserPerson == nil {
+                            Text("Add yourself to People")
+                                .font(.caption)
+                                .foregroundColor(.orange)
                         }
                     }
                     
@@ -218,7 +234,7 @@ struct ItemizedExpenseView: View {
     }
     
     private func addItemizedExpense() {
-        guard let payer = selectedPayer else { return }
+        guard let payer = currentUserPerson else { return }
         
         isProcessing = true
         
@@ -267,6 +283,11 @@ struct ItemizedExpenseView: View {
             }
         }
     }
+
+    private var currentUserPerson: Person? {
+        guard let profile = profileManager.currentProfile else { return nil }
+        return viewModel.people.first(where: { $0.id == profile.id })
+    }
 }
 
 // MARK: - Item Row View
@@ -290,7 +311,7 @@ struct ItemRowView: View {
             return "\(names.count) people"
         }
     }
-    
+
     private var hasSelection: Bool {
         !item.selectedBy.isEmpty
     }

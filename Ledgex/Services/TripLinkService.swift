@@ -6,12 +6,15 @@ actor TripLinkService {
     private var cachedLinks: [UUID: URL] = [:]
     private let session: URLSession
     private static let fallbackDomain = URL(string: "https://splyt-4801c.web.app/join")!
-    private let fallbackDomain = TripLinkService.fallbackDomain
     private let functionURL: URL?
     
-    init(session: URLSession = .shared, functionURL: URL? = APIKeyManager.shared.tripInviteFunctionURL) {
+    init(session: URLSession = .shared, functionURL: URL? = nil) {
         self.session = session
-        self.functionURL = functionURL
+        if let functionURL {
+            self.functionURL = functionURL
+        } else {
+            self.functionURL = APIKeyManager.shared.tripInviteFunctionURL
+        }
     }
     
     func link(for trip: Trip) async -> URL {
@@ -28,9 +31,9 @@ actor TripLinkService {
                 print("⚠️ Falling back to static trip link: \(error)")
             }
         }
-        let fallback = fallbackLink(for: trip)
-        cachedLinks[trip.id] = fallback
-        return fallback
+        let fallbackURL = fallbackLink(for: trip)
+        cachedLinks[trip.id] = fallbackURL
+        return fallbackURL
     }
     
     private func requestDynamicLink(for trip: Trip, endpoint: URL) async throws -> URL {

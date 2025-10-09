@@ -27,20 +27,20 @@ class TripListViewModel: ObservableObject {
         self.trips = DataManager.shared.loadTrips()
 
         let signOutObserver = NotificationCenter.default.addObserver(forName: .ledgexUserDidSignOut, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.handleSignedOut()
             }
         }
         let deleteObserver = NotificationCenter.default.addObserver(forName: .ledgexUserDidDeleteAccount, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
                 self?.handleSignedOut()
             }
         }
         notificationObservers.append(contentsOf: [signOutObserver, deleteObserver])
 
         // Sync trips from Firestore when initialized
-        Task { @MainActor in
-            await self.syncTripsFromFirebase()
+        Task { [weak self] in
+            await self?.syncTripsFromFirebase()
         }
     }
 
@@ -93,13 +93,13 @@ class TripListViewModel: ObservableObject {
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
     }
     
-    func createTrip(name: String, currency: Currency, flagEmoji: String = Trip.defaultFlag) async {
+    func createTrip(name: String, currency: Currency, flagEmoji: String? = nil) async {
         print("🆕 [CreateTrip] Starting trip creation: \(name)")
         let code = await dataStore.generateUniqueTripCode()
         print("🆕 [CreateTrip] Generated trip code: \(code)")
 
         var trip = Trip(name: name, code: code, baseCurrency: currency)
-        trip.flagEmoji = flagEmoji
+        trip.flagEmoji = flagEmoji ?? Trip.defaultFlag
 
         // Auto-add current user to the group if they have a profile
         if let currentUser = profileManager.createPersonFromProfile() {
@@ -190,7 +190,7 @@ class TripListViewModel: ObservableObject {
             return (false, "Group not found. Please check the code.")
         } catch {
             let message = FirebaseManager.userFriendlyError(error)
-            await handleError(error, fallback: message ?? "We couldn't join that group right now. Please try again.")
+            await handleError(error, fallback: message)
             return (false, message)
         }
     }

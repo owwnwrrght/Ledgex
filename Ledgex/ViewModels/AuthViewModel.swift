@@ -14,6 +14,10 @@ extension Notification.Name {
 
 @MainActor
 final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationControllerDelegate, ASAuthorizationControllerPresentationContextProviding {
+    enum AuthFlow {
+        case signInWithApple
+        case emailPassword
+    }
     enum PendingAction {
         case signIn
         case reauthenticateDelete
@@ -33,9 +37,17 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     }
 
     @Published var isSignedIn: Bool
+    @Published var currentFlow: AuthFlow = .signInWithApple
+    @Published var email: String = ""
+    @Published var password: String = ""
+    @Published var emailModeIsSignUp = false
     @Published var isProcessing = false
     @Published var errorMessage: String?
     @Published var detailedErrorLog: [String] = []
+    @Published var requiresEmailReauth = false
+    @Published var reauthEmail: String = ""
+    @Published var reauthPassword: String = ""
+    @Published var emailReauthError: String?
 
     private var currentNonce: String?
     private var authStateHandle: AuthStateDidChangeListenerHandle?
@@ -49,8 +61,8 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         super.init()
         
         authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
-            guard let self else { return }
-            Task { @MainActor in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 self.isSignedIn = user != nil
                 await FirebaseManager.shared.updateAvailability(for: user)
             }
@@ -98,6 +110,30 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         print("🔐 [Auth] Request configured with nonce: \(currentNonce?.prefix(8) ?? "nil")...")
         logError(stage: .initialization, message: "Request configured successfully with nonce")
     }
+    
+    func switchToEmailFlow() {
+        currentFlow = .emailPassword
+        errorMessage = nil
+    }
+
+    func signInWithEmail() {
+        Task { @MainActor in await performEmailSignIn() }
+    }
+
+    func signUpWithEmail() {
+        Task { @MainActor in await performEmailSignUp() }
+    }
+
+    func cancelEmailReauth() {
+        requiresEmailReauth = false
+        reauthPassword = ""
+        emailReauthError = nil
+        isProcessing = false
+    }
+
+    func confirmEmailAccountDeletion() {
+        Task { await performEmailReauthAndDelete() }
+    }
 
     private var isSimulator: Bool {
         #if targetEnvironment(simulator)
@@ -110,12 +146,13 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     private func checkNetworkConnectivity() {
         // Simple network check using a Firebase ping
         let db = Firestore.firestore()
-        db.collection("ping").document("check").getDocument { [weak self] (document: DocumentSnapshot?, error: Error?) in
-            Task { @MainActor in
+        db.collection("ping").document("check").getDocument { [weak self] (_, error: Error?) in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
                 if let error = error {
-                    self?.logError(stage: .networkConnectivity, message: "❌ Network check failed: \(error.localizedDescription)")
+                    self.logError(stage: .networkConnectivity, message: "❌ Network check failed: \(error.localizedDescription)")
                 } else {
-                    self?.logError(stage: .networkConnectivity, message: "✅ Network connectivity confirmed")
+                    self.logError(stage: .networkConnectivity, message: "✅ Network connectivity confirmed")
                 }
             }
         }
@@ -192,8 +229,8 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
                     print("🔐 [Auth] Unknown error")
                     detailedMessage = "Unknown error (code 1000) - Unspecified authentication failure"
                 @unknown default:
-                    print("🔐 [Auth] Unknown error code")
-                    detailedMessage = "Unknown error code: \(authError.code.rawValue)"
+                    print("🔐 [Auth] Unhandled error code: \(authError.code.rawValue)")
+                    detailedMessage = "Unhandled authorization error (code \(authError.code.rawValue))"
                 }
 
                 logError(stage: .appleAuthorization, message: detailedMessage)
@@ -218,30 +255,33 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     
     func signOut() {
         print("🔐 [Auth] Starting sign-out process...")
+        Task { [weak self] in
+            await self?.performSignOut()
+        }
+    }
 
-        Task { @MainActor in
-            do {
-                // Sign out from Firebase Auth
-                try Auth.auth().signOut()
-                print("✅ Signed out from Firebase Auth")
+    @MainActor
+    private func performSignOut() async {
+        do {
+            try Auth.auth().signOut()
+            print("✅ Signed out from Firebase Auth")
 
-                // Clear all local data
-                await cleanupUserData()
+            await cleanupUserData()
 
-                // Post notification to trigger app-wide cleanup
-                NotificationCenter.default.post(name: .ledgexUserDidSignOut, object: nil)
+            NotificationCenter.default.post(name: .ledgexUserDidSignOut, object: nil)
 
-                // Update UI state
-                isSignedIn = false
-                errorMessage = nil
-                detailedErrorLog = []
-                pendingAction = .signIn
+            isSignedIn = false
+            errorMessage = nil
+            detailedErrorLog = []
+            pendingAction = .signIn
+            requiresEmailReauth = false
+            reauthPassword = ""
+            emailReauthError = nil
 
-                print("✅ Sign-out complete")
-            } catch {
-                print("❌ Sign-out error: \(error.localizedDescription)")
-                errorMessage = "Failed to sign out: \(error.localizedDescription)"
-            }
+            print("✅ Sign-out complete")
+        } catch {
+            print("❌ Sign-out error: \(error.localizedDescription)")
+            errorMessage = "Failed to sign out: \(error.localizedDescription)"
         }
     }
 
@@ -269,11 +309,22 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     }
     
     func initiateAccountDeletion() {
-        guard Auth.auth().currentUser != nil else {
+        guard let user = Auth.auth().currentUser else {
             errorMessage = "No signed in user."
             return
         }
         pendingAction = .reauthenticateDelete
+        let providerIDs = user.providerData.map { $0.providerID }
+
+        if providerIDs.contains("password") {
+            isProcessing = false
+            emailReauthError = nil
+            reauthEmail = user.email ?? email
+            reauthPassword = ""
+            requiresEmailReauth = true
+            return
+        }
+
         let provider = ASAuthorizationAppleIDProvider()
         let request = provider.createRequest()
         configure(request: request, requestFullName: false)
@@ -288,7 +339,8 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     // MARK: - ASAuthorizationControllerDelegate
     nonisolated func authorizationController(controller: ASAuthorizationController, didCompleteWithAuthorization authorization: ASAuthorization) {
         print("🔐 [Auth-Delegate] didCompleteWithAuthorization called")
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             let elapsed = authStartTime.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "?"
             logError(stage: .appleAuthorization, message: "[Delegate] Authorization success after \(elapsed)s")
 
@@ -318,7 +370,8 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         print("🔐 [Auth-Delegate] Error: \(error)")
         print("🔐 [Auth-Delegate] Error localized: \(error.localizedDescription)")
 
-        Task { @MainActor in
+        Task { @MainActor [weak self] in
+            guard let self else { return }
             let elapsed = authStartTime.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "?"
             logError(stage: .appleAuthorization, message: "[Delegate] ❌ Authorization error after \(elapsed)s")
             logError(stage: .appleAuthorization, message: "[Delegate] Error: \(error)")
@@ -346,7 +399,7 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
                 case .unknown:
                     detailedMessage = "[Delegate] Unknown error (1000)"
                 @unknown default:
-                    detailedMessage = "[Delegate] Unknown code: \(authError.code.rawValue)"
+                    detailedMessage = "[Delegate] Unhandled code: \(authError.code.rawValue)"
                 }
 
                 logError(stage: .appleAuthorization, message: detailedMessage)
@@ -543,7 +596,12 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         print("🔐 [Auth] Firebase availability updated")
 
         // Get the name BEFORE syncing from Firestore (because sync might not have a profile yet)
-        let resolvedName = resolvedDisplayName(from: appleCredential, fallbackUser: authResult.user)
+        let appleProvidedName = formattedName(from: appleCredential)
+        let resolvedName = resolvedDisplayName(
+            from: appleCredential,
+            fallbackUser: authResult.user,
+            appleProvidedName: appleProvidedName
+        )
         print("🔐 [Auth] Resolved display name: \(resolvedName)")
 
         // Try to sync profile from Firestore
@@ -553,6 +611,14 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
 
         // ALWAYS ensure we have a profile after sign-in
         if ProfileManager.shared.currentProfile == nil {
+            let shouldCaptureName = (appleProvidedName?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+
+            if shouldCaptureName {
+                print("🔐 [Auth] Full name not provided by Apple. Prompting user to enter name manually.")
+                ProfileManager.shared.deleteProfile()
+                return
+            }
+
             print("🔐 [Auth] No profile after sync, creating new profile with name: \(resolvedName)")
             let newProfile = UserProfile(name: resolvedName, firebaseUID: authResult.user.uid)
             ProfileManager.shared.setProfile(newProfile)
@@ -570,12 +636,22 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
             if let profile = ProfileManager.shared.currentProfile {
                 print("🔐 [Auth] Profile details - ID: \(profile.id), Firebase UID: \(profile.firebaseUID ?? "nil"), Trip codes: \(profile.tripCodes)")
             }
-            // If profile exists but has no name or empty name, update it
-            if let profile = ProfileManager.shared.currentProfile,
-               profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if let appleProvidedName,
+               !appleProvidedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               let profile = ProfileManager.shared.currentProfile,
+               profile.name != appleProvidedName {
+                print("🔐 [Auth] Updating profile name to Apple-provided name: \(appleProvidedName)")
+                ProfileManager.shared.updateProfile(name: appleProvidedName)
+            } else if let profile = ProfileManager.shared.currentProfile,
+                      profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 print("🔐 [Auth] Updating empty profile name to: \(resolvedName)")
                 ProfileManager.shared.updateProfile(name: resolvedName)
             }
+        }
+
+        if let appleProvidedName,
+           !appleProvidedName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            await updateFirebaseDisplayName(for: authResult.user, to: appleProvidedName)
         }
     }
     
@@ -643,8 +719,12 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         print("✅ Account deletion complete")
     }
     
-    private func resolvedDisplayName(from credential: ASAuthorizationAppleIDCredential, fallbackUser user: User) -> String {
-        if let formatted = formattedName(from: credential) {
+    private func resolvedDisplayName(
+        from credential: ASAuthorizationAppleIDCredential,
+        fallbackUser user: User,
+        appleProvidedName: String? = nil
+    ) -> String {
+        if let formatted = appleProvidedName ?? formattedName(from: credential) {
             return formatted
         }
         if let displayName = user.displayName, !displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -665,6 +745,31 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         let name = formatter.string(from: components).trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty ? nil : name
     }
+
+    private func updateFirebaseDisplayName(for user: User, to name: String) async {
+        guard user.displayName != name else {
+            print("🔐 [Auth] Firebase Auth display name already up to date")
+            return
+        }
+
+        print("🔐 [Auth] Updating Firebase Auth display name to: \(name)")
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let changeRequest = user.createProfileChangeRequest()
+                changeRequest.displayName = name
+                changeRequest.commitChanges { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: ())
+                    }
+                }
+            }
+            print("🔐 [Auth] ✅ Firebase Auth display name updated")
+        } catch {
+            print("🔐 [Auth] ❌ Failed to update Firebase Auth display name: \(error)")
+        }
+    }
     
     private func signInWithFirebase(credential: AuthCredential) async throws -> AuthDataResult {
         print("🔐 [Auth] signInWithFirebase() called")
@@ -678,21 +783,24 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
 
                 if let error {
                     print("🔐 [Auth] ❌ Firebase sign-in error: \(error)")
-                    Task { @MainActor in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
                         self.logError(stage: .firebaseSignIn, message: "❌ Firebase sign-in failed after \(elapsed)s")
                         self.logError(stage: .firebaseSignIn, message: "Error: \(error)")
                     }
                     continuation.resume(throwing: error)
                 } else if let result {
                     print("🔐 [Auth] ✅ Firebase sign-in result received")
-                    Task { @MainActor in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
                         self.logError(stage: .firebaseSignIn, message: "✅ Firebase sign-in succeeded after \(elapsed)s")
                         self.logError(stage: .firebaseSignIn, message: "User UID: \(result.user.uid)")
                     }
                     continuation.resume(returning: result)
                 } else {
                     print("🔐 [Auth] ❌ No result and no error from Firebase")
-                    Task { @MainActor in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
                         self.logError(stage: .firebaseSignIn, message: "❌ No result and no error - unexpected state")
                     }
                     let error = NSError(domain: "LedgexAuth", code: -1, userInfo: [NSLocalizedDescriptionKey: "Unknown authentication error."])
@@ -707,6 +815,149 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         let logEntry = "[\(timestamp)] [\(stage.rawValue)] \(message)"
         print("🔐 [ErrorLog] \(logEntry)")
         detailedErrorLog.append(logEntry)
+    }
+
+    private func performEmailSignIn() async {
+        errorMessage = nil
+        guard validateEmailPasswordInputs() else { return }
+        isProcessing = true
+        do {
+            let result = try await Auth.auth().signIn(withEmail: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
+            try await postAuthenticationSetup(with: result)
+            await MainActor.run {
+                isProcessing = false
+                currentFlow = .signInWithApple
+                email = ""
+                password = ""
+            }
+        } catch {
+            await handleEmailAuthError(error)
+        }
+    }
+
+    private func performEmailSignUp() async {
+        errorMessage = nil
+        guard validateEmailPasswordInputs(isSignUp: true) else { return }
+        isProcessing = true
+        do {
+            let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = try await Auth.auth().createUser(withEmail: trimmedEmail, password: password)
+            try await postAuthenticationSetup(with: result, requiresNameCapture: true)
+            await MainActor.run {
+                isProcessing = false
+                currentFlow = .signInWithApple
+                email = ""
+                password = ""
+            }
+        } catch {
+            await handleEmailAuthError(error)
+        }
+    }
+
+    private func performEmailReauthAndDelete() async {
+        let trimmedEmail = reauthEmail.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty else {
+            await MainActor.run { self.emailReauthError = "Enter your email." }
+            return
+        }
+
+        guard reauthPassword.count >= 6 else {
+            await MainActor.run { self.emailReauthError = "Password must be at least 6 characters." }
+            return
+        }
+
+        await MainActor.run {
+            self.emailReauthError = nil
+            self.isProcessing = true
+        }
+
+        do {
+            let credential = EmailAuthProvider.credential(withEmail: trimmedEmail, password: reauthPassword)
+            try await reauthenticateAndDelete(credential: credential)
+            await MainActor.run {
+                requiresEmailReauth = false
+                reauthPassword = ""
+                emailReauthError = nil
+            }
+        } catch {
+            await MainActor.run {
+                self.isProcessing = false
+                if let nsError = error as NSError?, let code = AuthErrorCode(rawValue: nsError.code) {
+                    switch code {
+                    case .wrongPassword:
+                        self.emailReauthError = "Incorrect password."
+                    case .userNotFound:
+                        self.emailReauthError = "Account not found."
+                    default:
+                        self.emailReauthError = nsError.localizedDescription
+                    }
+                } else {
+                    self.emailReauthError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func validateEmailPasswordInputs(isSignUp: Bool = false) -> Bool {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty, trimmedEmail.contains("@"), trimmedEmail.contains(".") else {
+            errorMessage = "Enter a valid email address."
+            return false
+        }
+
+        guard password.count >= 6 else {
+            errorMessage = "Password must be at least 6 characters."
+            return false
+        }
+
+        if isSignUp {
+            emailModeIsSignUp = true
+        }
+
+        return true
+    }
+
+    private func handleEmailAuthError(_ error: Error) async {
+        await MainActor.run {
+            isProcessing = false
+            if let err = error as NSError? {
+                switch AuthErrorCode(rawValue: err.code) {
+                case .emailAlreadyInUse:
+                    self.errorMessage = "An account already exists for that email. Try signing in instead."
+                    self.emailModeIsSignUp = false
+                case .weakPassword:
+                    self.errorMessage = "Choose a stronger password."
+                case .invalidEmail:
+                    self.errorMessage = "That email doesn't look right."
+                case .wrongPassword:
+                    self.errorMessage = "Incorrect password."
+                case .userNotFound:
+                    self.errorMessage = "We couldn't find an account for that email."
+                    self.emailModeIsSignUp = true
+                default:
+                    self.errorMessage = err.localizedDescription
+                }
+            } else {
+                self.errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    private func postAuthenticationSetup(with authResult: AuthDataResult, requiresNameCapture: Bool = false) async throws {
+        await FirebaseManager.shared.updateAvailability(for: authResult.user)
+        await ProfileManager.shared.syncProfileFromFirebase()
+
+        if requiresNameCapture {
+            ProfileManager.shared.deleteProfile()
+            return
+        }
+
+        if ProfileManager.shared.currentProfile == nil {
+            let initialName = authResult.user.displayName ?? authResult.user.email ?? "Ledgex Member"
+            let newProfile = UserProfile(name: initialName, firebaseUID: authResult.user.uid)
+            ProfileManager.shared.setProfile(newProfile)
+            try await FirebaseManager.shared.saveUserProfile(newProfile)
+        }
     }
     
     private func randomNonceString(length: Int = 32) -> String {

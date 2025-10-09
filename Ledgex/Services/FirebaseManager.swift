@@ -314,9 +314,11 @@ class FirebaseManager: ObservableObject, TripDataStore {
         let userId = profile.id
         let userIdString = userId.uuidString
 
+        let documentID = profile.firebaseUID ?? userIdString
+
         do {
-            try await db.collection("users").document(userIdString).delete()
-            print("🗑️ Deleted user document for \(userIdString)")
+            try await db.collection("users").document(documentID).delete()
+            print("🗑️ Deleted user document for \(documentID)")
         } catch {
             print("⚠️ Failed to delete user document: \(error)")
         }
@@ -556,7 +558,7 @@ class FirebaseManager: ObservableObject, TripDataStore {
             }
         }
 
-        var trip = Trip(id: id,
+        let trip = Trip(id: id,
                         name: name,
                         code: code,
                         people: people,
@@ -710,16 +712,38 @@ class FirebaseManager: ObservableObject, TripDataStore {
         ]
 
         do {
+            try await migrateUserDocumentIfNeeded(firebaseUID: firebaseUID)
             let docRef = db.collection("users").document(firebaseUID)
             try await docRef.setData(profileData, merge: true)
             print("✅ User profile saved to Firestore")
 
             // Update local profile with Firebase UID
-            await ProfileManager.shared.updateProfileWithFirebaseUID(firebaseUID)
+            ProfileManager.shared.updateProfileWithFirebaseUID(firebaseUID)
         } catch {
             print("❌ Failed to save user profile: \(error)")
             throw error
         }
+    }
+
+    private func migrateUserDocumentIfNeeded(firebaseUID: String) async throws {
+        let users = db.collection("users")
+        let directRef = users.document(firebaseUID)
+        let directSnap = try await directRef.getDocument()
+        if directSnap.exists {
+            return
+        }
+
+        let query = try await users.whereField("firebaseUID", isEqualTo: firebaseUID).limit(to: 1).getDocuments()
+        if let oldDoc = query.documents.first {
+            try await directRef.setData(oldDoc.data(), merge: true)
+            try await oldDoc.reference.delete()
+        }
+    }
+
+    private func userDocumentSnapshot(for firebaseUID: String) async throws -> DocumentSnapshot? {
+        try await migrateUserDocumentIfNeeded(firebaseUID: firebaseUID)
+        let doc = try await db.collection("users").document(firebaseUID).getDocument()
+        return doc.exists ? doc : nil
     }
 
     @MainActor func fetchUserProfile() async throws -> UserProfile? {
@@ -729,10 +753,8 @@ class FirebaseManager: ObservableObject, TripDataStore {
         }
 
         do {
-            let docRef = db.collection("users").document(firebaseUID)
-            let document = try await docRef.getDocument()
-
-            guard document.exists, let data = document.data() else {
+            guard let document = try await userDocumentSnapshot(for: firebaseUID),
+                  let data = document.data() else {
                 print("⚠️ No user profile found in Firestore")
                 return nil
             }
@@ -771,9 +793,8 @@ class FirebaseManager: ObservableObject, TripDataStore {
         }
 
         do {
-            // First, get the user's profile to get their trip codes
-            let userDoc = try await db.collection("users").document(firebaseUID).getDocument()
-            guard let userData = userDoc.data(),
+            guard let userDoc = try await userDocumentSnapshot(for: firebaseUID),
+                  let userData = userDoc.data(),
                   let tripCodes = userData["tripCodes"] as? [String], !tripCodes.isEmpty else {
                 print("ℹ️ User has no trips")
                 return []
@@ -809,19 +830,22 @@ class FirebaseManager: ObservableObject, TripDataStore {
         print("🔗 [LinkTrip] Linking trip \(tripCode) to user \(firebaseUID)")
 
         do {
+            try await migrateUserDocumentIfNeeded(firebaseUID: firebaseUID)
             let docRef = db.collection("users").document(firebaseUID)
 
             // First check if the document exists
             let doc = try await docRef.getDocument()
             if !doc.exists {
                 print("⚠️ [LinkTrip] User document doesn't exist, creating it first...")
-                // Create the document if it doesn't exist
-                if let profile = await ProfileManager.shared.currentProfile {
+                if let profile = ProfileManager.shared.currentProfile {
                     try await saveUserProfile(profile)
                     print("✅ [LinkTrip] Created user document")
                 } else {
-                    print("❌ [LinkTrip] Cannot create user document - no profile")
-                    throw NSError(domain: "FirebaseManager", code: 1, userInfo: [NSLocalizedDescriptionKey: "No user profile available"])
+                    let placeholderName = auth.currentUser?.displayName ?? "Ledgex Member"
+                    let placeholderProfile = UserProfile(name: placeholderName, firebaseUID: firebaseUID)
+                    ProfileManager.shared.setProfile(placeholderProfile)
+                    try await saveUserProfile(placeholderProfile)
+                    print("✅ [LinkTrip] Created placeholder user document")
                 }
             }
 
@@ -833,11 +857,11 @@ class FirebaseManager: ObservableObject, TripDataStore {
             print("✅ [LinkTrip] Added trip \(tripCode) to user profile in Firestore")
 
             // Update local profile
-            if var profile = await ProfileManager.shared.currentProfile {
+            if var profile = ProfileManager.shared.currentProfile {
                 if !profile.tripCodes.contains(tripCode) {
                     profile.tripCodes.append(tripCode)
                     profile.lastSynced = Date()
-                    await ProfileManager.shared.updateProfile(profile: profile)
+                    ProfileManager.shared.updateProfile(profile: profile)
                     print("✅ [LinkTrip] Updated local profile with trip code")
                 } else {
                     print("ℹ️ [LinkTrip] Trip code already exists in local profile")
@@ -862,6 +886,7 @@ class FirebaseManager: ObservableObject, TripDataStore {
         }
 
         do {
+            try await migrateUserDocumentIfNeeded(firebaseUID: firebaseUID)
             let docRef = db.collection("users").document(firebaseUID)
             try await docRef.updateData([
                 "tripCodes": FieldValue.arrayRemove([tripCode]),
@@ -870,10 +895,10 @@ class FirebaseManager: ObservableObject, TripDataStore {
             print("✅ Removed trip \(tripCode) from user profile")
 
             // Update local profile
-            if var profile = await ProfileManager.shared.currentProfile {
+            if var profile = ProfileManager.shared.currentProfile {
                 profile.tripCodes.removeAll { $0 == tripCode }
                 profile.lastSynced = Date()
-                await ProfileManager.shared.updateProfile(profile: profile)
+                ProfileManager.shared.updateProfile(profile: profile)
             }
         } catch {
             print("❌ Failed to remove trip from user profile: \(error)")

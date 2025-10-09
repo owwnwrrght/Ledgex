@@ -4,7 +4,7 @@ import SwiftUI
 struct SignInView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @State private var showDebugLog = false
-
+    
     var body: some View {
         VStack(spacing: 32) {
             Spacer()
@@ -15,7 +15,7 @@ struct SignInView: View {
                 Text("Sign in to Ledgex")
                     .font(.title)
                     .fontWeight(.bold)
-                Text("Use Sign in with Apple to securely access your shared groups and expenses.")
+                Text("Use Sign in with Apple for the fastest setup, or opt for email instead.")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -23,20 +23,31 @@ struct SignInView: View {
             }
 
             VStack(spacing: 16) {
-                SignInWithAppleButton(.signIn) { request in
-                    print("🔐 [SignInView] Sign in with Apple button tapped")
-                    authViewModel.prepareSignInRequest(request)
-                } onCompletion: { result in
-                    print("🔐 [SignInView] Sign in completion called")
-                    authViewModel.handleSignInCompletion(result)
+                if authViewModel.currentFlow == .signInWithApple {
+                    SignInWithAppleButton(.signIn) { request in
+                        print("🔐 [SignInView] Sign in with Apple button tapped")
+                        authViewModel.prepareSignInRequest(request)
+                    } onCompletion: { result in
+                        print("🔐 [SignInView] Sign in completion called")
+                        authViewModel.handleSignInCompletion(result)
+                    }
+                    .signInWithAppleButtonStyle(.black)
+                    .frame(height: 52)
+                    .cornerRadius(12)
+                    .disabled(authViewModel.isProcessing)
+
+                    Button(action: authViewModel.switchToEmailFlow) {
+                        Text("Prefer email and password?")
+                            .font(.caption)
+                            .underline()
+                    }
+                    .padding(.top, 4)
+                } else {
+                    emailSignInForm
                 }
-                .signInWithAppleButtonStyle(.black)
-                .frame(height: 52)
-                .cornerRadius(12)
-                .disabled(authViewModel.isProcessing)
 
                 if authViewModel.isProcessing {
-                    ProgressView("Signing in…")
+                    ProgressView("Working…")
                         .progressViewStyle(CircularProgressViewStyle())
                 }
 
@@ -105,6 +116,51 @@ struct SignInView: View {
         }
         .padding()
         .background(Color(uiColor: .systemBackground))
+    }
+
+    private var emailSignInForm: some View {
+        VStack(spacing: 12) {
+            TextField("Email", text: $authViewModel.email)
+                .textContentType(.emailAddress)
+                .keyboardType(.emailAddress)
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+                .padding()
+                .background(Color(uiColor: .secondarySystemBackground))
+                .cornerRadius(10)
+
+            SecureField("Password", text: $authViewModel.password)
+                .textContentType(.password)
+                .padding()
+                .background(Color(uiColor: .secondarySystemBackground))
+                .cornerRadius(10)
+
+            Button(action: authViewModel.signInWithEmail) {
+                Text("Sign In")
+                    .font(.headline)
+                    .foregroundColor(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.blue)
+                    .cornerRadius(12)
+            }
+            .disabled(authViewModel.isProcessing)
+
+            Button(action: authViewModel.signUpWithEmail) {
+                Text("Create a new account")
+                    .font(.subheadline)
+                    .foregroundColor(.blue)
+                    .padding(.vertical, 6)
+            }
+            .disabled(authViewModel.isProcessing)
+
+            Button(action: { authViewModel.currentFlow = .signInWithApple }) {
+                Text("Back to Sign in with Apple")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                    .padding(.top, 8)
+            }
+        }
     }
 
     private func copyDebugLog() {

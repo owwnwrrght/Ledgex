@@ -6,7 +6,9 @@ struct TripDetailView: View {
     @StateObject private var viewModel: ExpenseViewModel
     @State private var selectedTab = 0
     @State private var showingShareSheet = false
-    @State private var showingAddExpense = false
+    @State private var showingAddExpenseOptions = false
+    @State private var expenseEntryMode: ExpenseEntryMode?
+    @State private var showingReceiptScanner = false
     @State private var showingFlagPicker = false
     @State private var showingSettings = false
     
@@ -64,7 +66,7 @@ struct TripDetailView: View {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 if selectedTab == 1 { // Expenses tab
                     Button(action: {
-                        showingAddExpense = true
+                        showingAddExpenseOptions = true
                     }) {
                         Image(systemName: "plus")
                     }
@@ -87,8 +89,8 @@ struct TripDetailView: View {
         .sheet(isPresented: $showingShareSheet) {
             ShareTripView(trip: viewModel.trip)
         }
-        .sheet(isPresented: $showingAddExpense) {
-            AddExpenseView(viewModel: viewModel)
+        .sheet(item: $expenseEntryMode) { mode in
+            AddExpenseView(viewModel: viewModel, mode: mode)
         }
         .sheet(isPresented: $showingFlagPicker) {
             FlagPickerView(currentSelection: viewModel.trip.flagEmoji) { newFlag in
@@ -98,12 +100,35 @@ struct TripDetailView: View {
         .sheet(isPresented: $showingSettings) {
             TripSettingsView(viewModel: viewModel)
         }
+        .fullScreenCover(isPresented: $showingReceiptScanner) {
+            ReceiptScannerView(viewModel: viewModel) { image, ocrResult in
+                showingReceiptScanner = false
+                viewModel.pendingItemizedExpense = (image, ocrResult)
+            }
+        }
         .sheet(item: itemWrapperBinding) { wrapper in
             ItemizedExpenseView(
                 viewModel: viewModel,
                 receiptImage: wrapper.value.0,
                 ocrResult: wrapper.value.1
             )
+        }
+        .confirmationDialog("Add Expense", isPresented: $showingAddExpenseOptions, titleVisibility: .visible) {
+            Button("Add manually") {
+                showingAddExpenseOptions = false
+                expenseEntryMode = .manual
+            }
+            Button("Quick add") {
+                showingAddExpenseOptions = false
+                expenseEntryMode = .quick
+            }
+            Button("Add from receipt") {
+                showingAddExpenseOptions = false
+                showingReceiptScanner = true
+            }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Choose how you’d like to capture this expense.")
         }
         .refreshable {
             await viewModel.refreshFromCloud()
@@ -239,52 +264,75 @@ struct TripSettingsView: View {
     private var inviteLinkSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 12) {
-                Image(systemName: "link.circle.fill")
-                    .font(.title2)
-                    .foregroundColor(.blue)
-                VStack(alignment: .leading, spacing: 2) {
+                ZStack {
+                    Circle()
+                        .fill(Color(.systemBlue).opacity(0.12))
+                        .frame(width: 44, height: 44)
+                    Image(systemName: "link")
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.blue)
+                }
+
+                VStack(alignment: .leading, spacing: 4) {
                     Text("Invite Link")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                    Text("Share this link to invite friends")
-                        .font(.caption)
+                        .font(.headline)
+                    Text("Send this link to invite new members.")
+                        .font(.footnote)
                         .foregroundColor(.secondary)
                 }
             }
 
             if isGeneratingLink {
-                ProgressView()
+                HStack {
+                    ProgressView()
+                    Text("Generating link…")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
             } else {
-                VStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {
                     Text(shareURL.absoluteString)
-                        .font(.caption)
+                        .font(.system(.footnote, design: .monospaced))
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                         .truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                        .contextMenu {
+                            Button(action: copyInviteLink) {
+                                Label("Copy link", systemImage: "doc.on.doc")
+                            }
+                        }
+
+                    Divider()
 
                     HStack(spacing: 12) {
-                        Button(action: {
-                            presentShareSheet()
-                        }) {
+                        Button(action: presentShareSheet) {
                             Label("Share", systemImage: "square.and.arrow.up")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
+                        .labelStyle(.titleAndIcon)
 
-                        Button(action: {
-                            UIPasteboard.general.string = shareURL.absoluteString
-                            UINotificationFeedbackGenerator().notificationOccurred(.success)
-                        }) {
+                        Button(action: copyInviteLink) {
                             Label("Copy", systemImage: "doc.on.doc")
                                 .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
+                        .labelStyle(.titleAndIcon)
                     }
                 }
             }
         }
-        .padding(.vertical, 8)
+        .padding(20)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .stroke(Color(.systemGray4), lineWidth: 0.5)
+        )
+        .padding(.vertical, 4)
     }
 
     private var groupCodeSection: some View {
@@ -360,6 +408,11 @@ struct TripSettingsView: View {
             inviteURL = url
             isGeneratingLink = false
         }
+    }
+
+    private func copyInviteLink() {
+        UIPasteboard.general.string = shareURL.absoluteString
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
     }
 
     private func presentShareSheet() {

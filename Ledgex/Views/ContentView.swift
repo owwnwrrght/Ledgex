@@ -10,24 +10,14 @@ struct ContentView: View {
     @State private var isProcessingIncomingLink = false
     @State private var isShowingLinkAlert = false
     @State private var linkAlertMessage: String?
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     
     var body: some View {
         Group {
             if authViewModel.isSignedIn {
-                if profileManager.currentProfile != nil {
-                    NavigationView {
-                        TripListView(viewModel: tripListViewModel)
-                            .toolbar {
-                                ToolbarItem(placement: .navigationBarLeading) {
-                                    Button(action: { showingProfile = true }) {
-                                        Image(systemName: "person.circle.fill")
-                                    }
-                                }
-                            }
-                    }
-                    .sheet(isPresented: $showingProfile) {
-                        ProfileView()
-                    }
+                if let profile = profileManager.currentProfile,
+                   !profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    adaptiveTripInterface
                 } else {
                     ProfileSetupView()
                 }
@@ -73,6 +63,27 @@ struct ContentView: View {
 // MARK: - Deep Link Handling
 
 private extension ContentView {
+    @ViewBuilder
+    var adaptiveTripInterface: some View {
+        if horizontalSizeClass == .regular {
+            TripSplitView(viewModel: tripListViewModel, showingProfile: $showingProfile)
+        } else {
+            NavigationStack {
+                TripListView(viewModel: tripListViewModel)
+            }
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { showingProfile = true }) {
+                        Image(systemName: "person.circle.fill")
+                    }
+                }
+            }
+            .sheet(isPresented: $showingProfile) {
+                ProfileView()
+            }
+        }
+    }
+
     func handleIncomingURL(_ url: URL) {
         guard let deepLink = DeepLinkHandler.parse(url: url) else { return }
         switch deepLink {

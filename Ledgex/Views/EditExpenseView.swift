@@ -21,7 +21,6 @@ struct EditExpenseView: View {
     // Receipt photo support
     @State private var receiptImages: [UIImage] = []
     @State private var existingReceiptIds: [String]
-    @State private var selectedCategory: ExpenseCategory
     
     @ObservedObject private var currencyService = CurrencyExchangeService.shared
     @ObservedObject private var profileManager = ProfileManager.shared
@@ -39,7 +38,6 @@ struct EditExpenseView: View {
         _selectedParticipants = State(initialValue: Set(expense.participants.map { $0.id }))
         _currentExchangeRate = State(initialValue: expense.exchangeRate)
         _existingReceiptIds = State(initialValue: expense.receiptImageIds)
-        _selectedCategory = State(initialValue: expense.category)
         
         // Initialize custom amounts
         var initialCustomAmounts: [UUID: String] = [:]
@@ -79,7 +77,6 @@ struct EditExpenseView: View {
            selectedPayer?.id != expense.paidBy.id ||
            splitType != expense.splitType ||
            Set(expense.participants.map { $0.id }) != selectedParticipants ||
-           selectedCategory != expense.category ||
            receiptImages.count > 0 {
             return true
         }
@@ -194,18 +191,23 @@ struct EditExpenseView: View {
                 }
             }
             
-            Picker("Paid by", selection: $selectedPayer) {
-                Text("Select payer").tag(Optional<Person>.none)
-                ForEach(viewModel.people) { person in
-                    Text(person.name).tag(Optional(person))
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Image(systemName: "person.circle")
+                    .foregroundColor(.secondary)
+                    .frame(width: 24)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Paid by")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Text(selectedPayer?.name ?? "Unknown")
+                        .font(.body)
+                        .fontWeight(.semibold)
                 }
+
+                Spacer()
             }
 
-            Picker("Category", selection: $selectedCategory) {
-                ForEach(ExpenseCategory.allCases) { category in
-                    Text(category.rawValue).tag(category)
-                }
-            }
         }
     }
     
@@ -321,7 +323,6 @@ struct EditExpenseView: View {
             updatedExpense.paidBy = payer
             updatedExpense.participants = viewModel.people.filter { selectedParticipants.contains($0.id) }
             updatedExpense.splitType = splitType
-            updatedExpense.category = selectedCategory
             
             if splitType == .custom {
                 updatedExpense.customSplits = customAmounts.compactMapValues { Decimal(string: $0) }

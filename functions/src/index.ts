@@ -17,6 +17,7 @@ interface FirebaseDynamicLinkResponse {
 interface PersonDoc {
   id?: string;
   name?: string;
+  hasCompletedExpenses?: boolean;
 }
 
 interface ExpenseDoc {
@@ -25,6 +26,7 @@ interface ExpenseDoc {
   amount?: number;
   baseCurrency?: string;
   createdBy?: string;
+  participantIDs?: string[];
 }
 
 interface TripDoc {
@@ -132,6 +134,12 @@ export const onTripUpdated = onDocumentUpdated("trips/{tripId}", async (event) =
     tasks.push(handleNewMembers(newPeople, afterData, tripId));
   }
 
+  const wasReady = isTripReadyToSettle(beforeData?.people);
+  const isReady = isTripReadyToSettle(afterData.people);
+  if (!wasReady && isReady) {
+    tasks.push(handleReadyToSettle(afterData, tripId));
+  }
+
   await Promise.all(tasks);
 });
 
@@ -157,8 +165,11 @@ async function handleNewExpenses(expenses: ExpenseDoc[], trip: TripDoc, tripId: 
     }
 
     const creator = expense.createdBy ?? null;
-    const recipients = people
-      .map((person) => person.id)
+    const participantIDs = Array.isArray(expense.participantIDs) && expense.participantIDs.length > 0
+      ? expense.participantIDs
+      : people.map((person) => person.id).filter((id): id is string => Boolean(id));
+
+    const recipients = participantIDs
       .filter((id): id is string => Boolean(id) && id !== creator);
 
     const tokens = await fetchTokens(recipients);
@@ -230,6 +241,30 @@ async function handleTripStarted(trip: TripDoc, tripId: string): Promise<void> {
     body: "You can now start adding expenses to the trip",
   }, {
     type: "tripStarted",
+    tripId,
+    tripCode,
+  });
+}
+
+async function handleReadyToSettle(trip: TripDoc, tripId: string): Promise<void> {
+  const people = trip.people ?? [];
+  const tripName = trip.name ?? "Group";
+  const tripCode = trip.code ?? "";
+
+  const recipients = people
+    .map((person) => person.id)
+    .filter((id): id is string => Boolean(id));
+
+  const tokens = await fetchTokens(recipients);
+  if (!tokens.length) {
+    return;
+  }
+
+  await sendMulticast(tokens, {
+    title: `${tripName} is ready to settle`,
+    body: "Everyone finished adding expenses. Time to split!",
+  }, {
+    type: "readyToSettle",
     tripId,
     tripCode,
   });
@@ -307,4 +342,13 @@ function formatCurrency(amount: number, currency: string): string {
     logger.warn("Failed to format currency", { error, currency, amount });
     return amount.toFixed(2);
   }
+}
+
+function isTripReadyToSettle(people: PersonDoc[] | undefined): boolean {
+  if (!people || !people.length) {
+    return false;
+  }
+  return people
+    .filter((person) => Boolean(person.id))
+    .every((person) => Boolean(person.hasCompletedExpenses));
 }

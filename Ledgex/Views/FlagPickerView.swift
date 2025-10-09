@@ -101,22 +101,54 @@ private struct FlagOption: Identifiable {
     var id: String { code + emoji }
     
     static var all: [FlagOption] {
-        Locale.isoRegionCodes.compactMap { code in
+        (customSymbols + regionCodes.compactMap { code in
             guard let emoji = code.flagEmoji else { return nil }
             let localizedName = Locale.current.localizedString(forRegionCode: code) ?? code
             return FlagOption(code: code, emoji: emoji, name: localizedName)
-        }
+        })
         .sorted { $0.name < $1.name }
+    }
+
+    private static var regionCodes: [String] {
+        if #available(iOS 16.0, *) {
+            return Locale.Region.isoRegions.map { $0.identifier }
+        } else {
+            return Locale.isoRegionCodes
+        }
+    }
+
+    private static var customSymbols: [FlagOption] {
+        let options: [(code: String, emoji: String, name: String)] = [
+            ("ADVENTURE", "⛰️", "Adventure"),
+            ("BEACH", "🏖️", "Beach"),
+            ("ROADTRIP", "🚗", "Road Trip"),
+            ("CELEBRATE", "🥳", "Celebration"),
+            ("FOODIE", "🍽️", "Foodie"),
+            ("NIGHTOUT", "🍹", "Night Out"),
+            ("CAMPING", "🏕️", "Camping"),
+            ("SKI", "🎿", "Ski Trip"),
+            ("CRUISE", "🛳️", "Cruise"),
+            ("FAMILY", "👨‍👩‍👧", "Family Trip"),
+            ("MUSIC", "🎵", "Music Trip"),
+            ("SPORTS", "🏟️", "Sports Trip")
+        ]
+        return options.map { FlagOption(code: $0.code, emoji: $0.emoji, name: $0.name) }
     }
     
     static var popular: [FlagOption] {
-        let popularCodes = ["TRAVEL", "WORLD", "US", "CA", "MX", "GB", "FR", "ES", "IT", "DE", "JP", "KR", "CN", "AU", "NZ", "BR", "AR", "CL", "ZA", "EG"]
+        let popularCodes = ["TRAVEL", "WORLD", "ADVENTURE", "BEACH", "ROADTRIP", "US", "CA", "GB", "FR", "IT", "JP", "AU", "NZ"]
         return popularCodes.compactMap { code in
             switch code {
             case "TRAVEL":
                 return FlagOption(code: code, emoji: "✈️", name: "Travel")
             case "WORLD":
                 return FlagOption(code: code, emoji: "🌍", name: "Global")
+            case "ADVENTURE":
+                return FlagOption(code: code, emoji: "⛰️", name: "Adventure")
+            case "BEACH":
+                return FlagOption(code: code, emoji: "🏖️", name: "Beach")
+            case "ROADTRIP":
+                return FlagOption(code: code, emoji: "🚗", name: "Road Trip")
             default:
                 guard let emoji = code.flagEmoji else { return nil }
                 let name = Locale.current.localizedString(forRegionCode: code) ?? code

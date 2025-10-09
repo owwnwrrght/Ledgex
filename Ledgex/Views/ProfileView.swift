@@ -160,5 +160,102 @@ struct ProfileView: View {
         } message: {
             Text("This will permanently remove your Ledgex account and associated data.")
         }
+        .sheet(isPresented: Binding(
+            get: { authViewModel.requiresEmailReauth },
+            set: { if !$0 { authViewModel.cancelEmailReauth() } }
+        )) {
+            EmailReauthSheet(authViewModel: authViewModel)
+        }
+    }
+}
+
+private struct EmailReauthSheet: View {
+    @ObservedObject var authViewModel: AuthViewModel
+    @FocusState private var passwordFocused: Bool
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 20) {
+                VStack(spacing: 8) {
+                    Text("Confirm Password")
+                        .font(.title3)
+                        .fontWeight(.semibold)
+
+                    Text("Enter your password to delete your Ledgex account.")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
+                }
+
+                VStack(alignment: .leading, spacing: 12) {
+                    TextField("Email", text: Binding(
+                        get: { authViewModel.reauthEmail },
+                        set: { authViewModel.reauthEmail = $0 }
+                    ))
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+                    .disabled(true)
+
+                    SecureField("Password", text: Binding(
+                        get: { authViewModel.reauthPassword },
+                        set: { authViewModel.reauthPassword = $0 }
+                    ))
+                    .textContentType(.password)
+                    .padding(12)
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+                    .focused($passwordFocused)
+
+                    if let error = authViewModel.emailReauthError, !error.isEmpty {
+                        Text(error)
+                            .font(.footnote)
+                            .foregroundColor(.red)
+                    }
+                }
+                .padding(.horizontal)
+
+                if authViewModel.isProcessing {
+                    ProgressView()
+                        .progressViewStyle(CircularProgressViewStyle())
+                }
+
+                HStack(spacing: 12) {
+                    Button("Cancel") {
+                        authViewModel.cancelEmailReauth()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color(uiColor: .secondarySystemBackground))
+                    .cornerRadius(12)
+
+                    Button("Delete Account", role: .destructive) {
+                        authViewModel.confirmEmailAccountDeletion()
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding()
+                    .background(Color.red)
+                    .cornerRadius(12)
+                    .foregroundColor(.white)
+                    .disabled(authViewModel.isProcessing)
+                }
+                .padding(.horizontal)
+
+                Spacer()
+            }
+            .padding(.top, 32)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") {
+                        authViewModel.cancelEmailReauth()
+                    }
+                }
+            }
+        }
     }
 }

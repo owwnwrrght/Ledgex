@@ -1,6 +1,8 @@
 import Foundation
 import UserNotifications
+import FirebaseAuth
 import FirebaseFirestore
+import FirebaseMessaging
 import SwiftUI
 import Combine
 
@@ -18,6 +20,8 @@ class NotificationService: NSObject, ObservableObject {
 
     private func setupMessaging() {
         UNUserNotificationCenter.current().delegate = self
+        Messaging.messaging().delegate = self
+        fetchCurrentToken()
     }
     
     // Request notification permissions
@@ -46,7 +50,7 @@ class NotificationService: NSObject, ObservableObject {
     @MainActor func updateFCMToken(_ token: String) {
         fcmToken = token
         ProfileManager.shared.updatePushToken(token)
-        
+
         // Also update token on the server for each trip the user is part of
         Task {
             await self.updateServerTokens()
@@ -58,11 +62,14 @@ class NotificationService: NSObject, ObservableObject {
             (ProfileManager.shared.currentProfile, self.fcmToken)
         }
         guard let profile = profileAndToken.0,
-              let token = profileAndToken.1 else { return }
+              let token = profileAndToken.1,
+              let firebaseUID = Auth.auth().currentUser?.uid else { return }
         let db = Firestore.firestore()
-        let docRef = db.collection("users").document(profile.id.uuidString)
+        let docRef = db.collection("users").document(firebaseUID)
         do {
             try await docRef.setData([
+                "id": profile.id.uuidString,
+                "firebaseUID": firebaseUID,
                 "name": profile.name,
                 "preferredCurrency": profile.preferredCurrency.rawValue,
                 "updatedAt": FieldValue.serverTimestamp()
@@ -72,6 +79,19 @@ class NotificationService: NSObject, ObservableObject {
             ])
         } catch {
             print("Failed to update FCM token in Firestore: \(error)")
+        }
+    }
+
+    private func fetchCurrentToken() {
+        Messaging.messaging().token { [weak self] token, error in
+            if let error {
+                print("Failed to fetch FCM token: \(error)")
+                return
+            }
+            guard let token, let self else { return }
+            Task { @MainActor in
+                self.updateFCMToken(token)
+            }
         }
     }
     
@@ -152,3 +172,12 @@ extension NotificationService: UNUserNotificationCenterDelegate {
     }
 }
 
+// MARK: - MessagingDelegate
+extension NotificationService: MessagingDelegate {
+    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
+        guard let token = fcmToken else { return }
+        Task { @MainActor in
+            self.updateFCMToken(token)
+        }
+    }
+}

@@ -4,17 +4,8 @@ struct ExpensesView: View {
     @ObservedObject var viewModel: ExpenseViewModel
     @State private var expenseToEdit: Expense?
     @State private var processingDone = false
-    @State private var selectedCategoryFilter: ExpenseCategory? = nil
-    
-    private var filteredExpenses: [Expense] {
-        if let category = selectedCategoryFilter {
-            return viewModel.expenses.filter { $0.category == category }
-        }
-        return viewModel.expenses
-    }
-
     private var totalExpenses: Decimal {
-        filteredExpenses.reduce(Decimal.zero) { $0 + $1.amount }
+        viewModel.expenses.reduce(Decimal.zero) { $0 + $1.amount }
     }
     
     private var totalExpensesSummary: some View {
@@ -84,15 +75,15 @@ struct ExpensesView: View {
     
     private var mainContent: some View {
         List {
-            if !filteredExpenses.isEmpty {
+            if !viewModel.expenses.isEmpty {
                 Section {
                     totalExpensesSummary
                 }
             }
 
-            if !filteredExpenses.isEmpty {
+            if !viewModel.expenses.isEmpty {
                 Section {
-                    ForEach(filteredExpenses) { expense in
+                    ForEach(viewModel.expenses) { expense in
                         ExpenseRow(expense: expense, baseCurrency: viewModel.trip.baseCurrency, dataStore: FirebaseManager.shared)
                             .contentShape(Rectangle())
                             .onTapGesture {
@@ -100,14 +91,7 @@ struct ExpensesView: View {
                             }
                     }
                     .onDelete { indexSet in
-                        if selectedCategoryFilter == nil {
-                            viewModel.removeExpense(at: indexSet)
-                        } else {
-                            let originalIndexes = IndexSet(indexSet.compactMap { index in
-                                viewModel.expenses.firstIndex(where: { $0.id == filteredExpenses[index].id })
-                            })
-                            viewModel.removeExpense(at: originalIndexes)
-                        }
+                        viewModel.removeExpense(at: indexSet)
                     }
                 } header: {
                     Text("Expenses")
@@ -119,7 +103,7 @@ struct ExpensesView: View {
     
     @ViewBuilder
     private var emptyStateView: some View {
-        if filteredExpenses.isEmpty {
+        if viewModel.expenses.isEmpty {
             VStack(spacing: 20) {
                 Image(systemName: viewModel.isInSetupPhase ? "person.3.fill" : "dollarsign.circle")
                     .font(.system(size: 60))
@@ -159,21 +143,15 @@ struct ExpensesView: View {
         viewModel.people.first(where: viewModel.isCurrentUser)
     }
 
-    private var canToggleCompletion: Bool {
-        guard let person = currentUserPerson else { return false }
-        return viewModel.canToggleCompletion(for: person)
-    }
-
     private var hasCompletedExpenses: Bool {
         currentUserPerson?.hasCompletedExpenses ?? false
     }
 
     private var doneButton: some View {
         Group {
-            if canToggleCompletion && !viewModel.expenses.isEmpty {
+            if let person = currentUserPerson {
                 VStack(spacing: 16) {
                     Button(action: {
-                        guard let person = currentUserPerson else { return }
                         processingDone = true
                         Task {
                             await viewModel.toggleCompletion(for: person)
@@ -213,53 +191,47 @@ struct ExpenseRow: View {
     let baseCurrency: Currency
     let dataStore: TripDataStore
 
-    private var splitDescription: String {
+    private var splitSummary: String {
         switch expense.splitType {
         case .equal:
-            return "Split equally • \(expense.participants.count) people"
+            return "Split equally"
         case .itemized:
-            return "Itemized • \(expense.receiptItems.count) items"
+            return "Itemized receipt"
         case .custom:
-            return "Custom split • \(expense.participants.count) people"
+            return "Custom split"
         }
     }
 
     var body: some View {
-        HStack(spacing: 16) {
-            Image(systemName: expense.category.icon)
-                .foregroundColor(.blue)
-                .frame(width: 20)
+        HStack(alignment: .top, spacing: 12) {
+            ZStack {
+                Circle()
+                    .fill(Color.blue.opacity(0.12))
+                    .frame(width: 36, height: 36)
+                Image(systemName: expense.hasReceipt ? "doc.text.viewfinder" : "list.bullet.rectangle")
+                    .foregroundColor(.blue)
+                    .font(.system(size: 16, weight: .medium))
+            }
 
             VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     Text(expense.description)
                         .font(.body)
                         .fontWeight(.semibold)
+                        .lineLimit(1)
 
                     if expense.hasReceipt {
-                        Image(systemName: "doc.text.fill")
+                        Image(systemName: "paperclip.circle.fill")
                             .font(.caption2)
                             .foregroundColor(.blue)
                     }
                 }
 
-                HStack(spacing: 6) {
-                    Text("Paid by")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(expense.paidBy.name)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
-                    Text("•")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(expense.date, style: .date)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+                Text("Paid by \(expense.paidBy.name)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
-                Text(splitDescription)
+                Text(splitSummary)
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -274,9 +246,9 @@ struct ExpenseRow: View {
 
             Text(expense.originalAmountFormatted)
                 .font(.body)
-                .fontWeight(.bold)
+                .fontWeight(.semibold)
                 .foregroundColor(.primary)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 6)
     }
 }
