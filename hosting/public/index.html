@@ -2,107 +2,159 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ledgex – Split shared travel expenses with ease</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ledgex — Split shared travel expenses with ease</title>
+    <meta name="description" content="Ledgex keeps your travel group in sync. Log purchases, split costs fairly, and settle up with clarity." />
+    <meta property="og:title" content="Ledgex — Shared trips made simple" />
+    <meta property="og:description" content="Log purchases, split costs, and settle up when the adventure ends." />
+    <meta name="theme-color" content="#316bff" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="/assets/css/main.css" />
   </head>
   <body>
-    <header class="site-header">
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header" role="banner">
       <div class="container header-content">
-        <a class="brand" href="/">Ledgex</a>
-        <nav class="main-nav">
+        <a class="brand" href="/" aria-label="Ledgex home">Ledgex</a>
+        <nav class="main-nav" aria-label="Primary">
           <a href="#features">Features</a>
           <a href="#how">How it works</a>
           <a href="#privacy">Privacy</a>
           <a href="/support/">Support</a>
-          <a class="button" href="https://apps.apple.com">Get the app</a>
+          <a class="button button-primary" href="https://apps.apple.com">Get the app</a>
         </nav>
+        <button class="menu-toggle" aria-expanded="false" aria-controls="mobile-nav">
+          <span class="sr-only">Toggle menu</span>
+          ☰
+        </button>
       </div>
+
+      <nav id="mobile-nav" class="mobile-nav" hidden>
+        <a href="#features">Features</a>
+        <a href="#how">How it works</a>
+        <a href="#privacy">Privacy</a>
+        <a href="/support/">Support</a>
+        <a class="button button-primary" href="https://apps.apple.com">Get the app</a>
+      </nav>
     </header>
 
-    <main>
-      <section class="hero">
+    <main id="main">
+      <section class="hero" aria-labelledby="hero-title">
         <div class="container hero-content">
           <div class="hero-copy">
             <span class="badge">Built for shared adventures</span>
-            <h1>Shared trips made simple.</h1>
-            <p>
-              Ledgex keeps your travel group on the same page—log purchases, split costs, and settle up when the adventure ends.
+            <h1 id="hero-title">Shared trips made simple.</h1>
+            <p class="lede">
+              Track expenses as you go, keep balances fair, and settle up without spreadsheets.
             </p>
             <div class="hero-actions">
-              <a class="button" href="https://apps.apple.com">Download Ledgex</a>
+              <a class="button button-primary" href="https://apps.apple.com" aria-label="Download Ledgex on the App Store">Download Ledgex</a>
               <a class="link" href="/join/">Already invited? Enter your code →</a>
             </div>
-          </div>
-          <div class="hero-card">
-            <h2>Weekend in Lisbon</h2>
-            <ul>
-              <li><span>☕️</span> Brunch at Nicolau <strong>€42.10</strong></li>
-              <li><span>🎟️</span> Tram 28 day passes <strong>€18.00</strong></li>
-              <li><span>🏨</span> Apartment deposit <strong>€260.00</strong></li>
+            <ul class="trust-list" aria-label="Reasons people trust Ledgex">
+              <li>Real-time sync</li>
+              <li>Flexible splits</li>
+              <li>Receipts &amp; notes</li>
+              <li>Private by design</li>
             </ul>
-            <p class="card-note">Ledgex keeps the balance fair for everyone.</p>
           </div>
+
+          <aside class="hero-card" aria-label="Example trip">
+            <h2>
+              Weekend in Lisbon
+              <span class="pill">3 members</span>
+            </h2>
+            <ul class="ledger">
+              <li><div><span aria-hidden="true">☕️</span> Brunch at Nicolau</div> <strong>€42.10</strong></li>
+              <li><div><span aria-hidden="true">🎟️</span> Tram 28 day passes</div> <strong>€18.00</strong></li>
+              <li><div><span aria-hidden="true">🏨</span> Apartment deposit</div> <strong>€260.00</strong></li>
+            </ul>
+            <p class="card-note">Balances stay transparent for everyone.</p>
+          </aside>
         </div>
       </section>
 
-      <section id="features" class="section features">
+      <section id="features" class="section features" aria-labelledby="features-title">
         <div class="container">
-          <h2>Why travelers choose Ledgex</h2>
+          <h2 id="features-title">Why travelers choose Ledgex</h2>
           <div class="feature-grid">
             <article>
               <h3>Real-time sync</h3>
-              <p>Expenses update instantly for every member—no spreadsheets, no guesswork.</p>
+              <p>Every expense updates instantly across the group—no texts, no tabs to reconcile.</p>
             </article>
             <article>
               <h3>Flexible splits</h3>
-              <p>Split evenly, by amount, or by person. Ledgex handles currency conversions automatically.</p>
+              <p>Split evenly, by shares, or by person. Automatic currency handling built in.</p>
             </article>
             <article>
-              <h3>Receipts & notes</h3>
-              <p>Capture receipts, add context, and keep a clean history for reimbursements.</p>
+              <h3>Receipts &amp; notes</h3>
+              <p>Snap a receipt, add context, and keep a clean history for reimbursements.</p>
+            </article>
+            <article>
+              <h3>Works offline</h3>
+              <p>Log on planes and trains. Changes sync the moment you're back online.</p>
             </article>
           </div>
         </div>
       </section>
 
-      <section id="how" class="section how">
+      <section id="how" class="section how" aria-labelledby="how-title">
         <div class="container">
-          <h2>From invite to settle in three steps</h2>
-          <ol>
-            <li><strong>Create a trip.</strong> Name it, pick a currency, and add your group emoji.</li>
-            <li><strong>Invite your crew.</strong> Share a quick join link or 10-character code.</li>
-            <li><strong>Track everything.</strong> Log purchases on the go and settle up with clear totals.</li>
+          <h2 id="how-title">From invite to settle in three steps</h2>
+          <ol class="steps">
+            <li><strong>Create a trip.</strong> Name it, pick a currency, add your group emoji.</li>
+            <li><strong>Invite your crew.</strong> Share a link or 10-character code. They join instantly.</li>
+            <li><strong>Track &amp; settle.</strong> Log purchases together. Settle up with clear totals.</li>
           </ol>
         </div>
       </section>
 
-      <section id="privacy" class="section privacy">
+      <section class="section quotes" aria-labelledby="quotes-title">
+        <div class="container">
+          <h2 id="quotes-title">Loved by group travelers</h2>
+          <div class="quote-grid">
+            <figure>
+              <blockquote>“No more awkward money chats. Ledgex kept our Barcelona trip drama-free.”</blockquote>
+              <figcaption>— Maya A.</figcaption>
+            </figure>
+            <figure>
+              <blockquote>“The receipts feature saved our reimbursement process after the conference.”</blockquote>
+              <figcaption>— Jordan R.</figcaption>
+            </figure>
+            <figure>
+              <blockquote>“Fast, simple, and private. Our ski house uses it every weekend.”</blockquote>
+              <figcaption>— Priya K.</figcaption>
+            </figure>
+          </div>
+        </div>
+      </section>
+
+      <section id="privacy" class="section privacy" aria-labelledby="privacy-title">
         <div class="container privacy-content">
           <div>
-            <h2>Private by design</h2>
-            <p>Only invited members can view a trip. We rely on Firebase Authentication and Firestore security rules to keep data protected.</p>
+            <h2 id="privacy-title">Private by design</h2>
+            <p>Only invited members can view a trip. End-to-end HTTPS, encrypted at rest, and clear controls.</p>
           </div>
           <div>
             <ul>
-              <li>All data travels over HTTPS and is encrypted at rest.</li>
-              <li>Export or delete your data anytime from settings.</li>
-              <li>Read our <a href="/privacy/">Privacy Policy</a> and <a href="/terms/">Terms of Service</a> for the full details.</li>
+              <li>Export or delete your data anytime.</li>
+              <li>Read our <a href="/privacy/">Privacy Policy</a> and <a href="/terms/">Terms of Service</a>.</li>
             </ul>
           </div>
         </div>
       </section>
 
-      <section class="section cta">
+      <section class="section cta" aria-labelledby="cta-title">
         <div class="container cta-content">
-          <h2>Ready to plan your next trip?</h2>
+          <h2 id="cta-title">Ready to plan your next trip?</h2>
           <p>Create your first Ledgex group in under a minute.</p>
-          <a class="button" href="https://apps.apple.com">Download Ledgex</a>
+          <a class="button button-primary" href="https://apps.apple.com">Download Ledgex</a>
         </div>
       </section>
     </main>
 
-    <footer class="site-footer">
+    <footer class="site-footer" role="contentinfo">
       <div class="container footer-content">
         <div>
           <strong>Ledgex</strong>
