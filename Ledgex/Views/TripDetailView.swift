@@ -33,24 +33,29 @@ struct TripDetailView: View {
     }
     
     var body: some View {
-        TabView(selection: $selectedTab) {
-            PeopleView(viewModel: viewModel)
-                .tabItem {
-                    Label("People", systemImage: "person.3")
-                }
-                .tag(0)
-            
-            ExpensesView(viewModel: viewModel)
-                .tabItem {
-                    Label("Expenses", systemImage: "dollarsign.circle")
-                }
-                .tag(1)
-            
-            SettlementsView(viewModel: viewModel)
-                .tabItem {
-                    Label("Settle Up", systemImage: viewModel.allParticipantsConfirmed ? "arrow.left.arrow.right" : "clock")
-                }
-                .tag(2)
+        ZStack {
+            LinearGradient.ledgexBackground
+                .ignoresSafeArea()
+
+            TabView(selection: $selectedTab) {
+                PeopleView(viewModel: viewModel)
+                    .tabItem {
+                        Label("People", systemImage: "person.3")
+                    }
+                    .tag(0)
+
+                ExpensesView(viewModel: viewModel)
+                    .tabItem {
+                        Label("Expenses", systemImage: "dollarsign.circle")
+                    }
+                    .tag(1)
+
+                SettlementsView(viewModel: viewModel)
+                    .tabItem {
+                        Label("Settle Up", systemImage: viewModel.allParticipantsConfirmed ? "arrow.left.arrow.right" : "clock")
+                    }
+                    .tag(2)
+            }
         }
         .navigationTitle(viewModel.trip.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -74,7 +79,7 @@ struct TripDetailView: View {
                 }
 
                 Button(action: {
-                    presentNativeShareSheet()
+                    showingShareSheet = true
                 }) {
                     Label("Invite Friends", systemImage: "person.badge.plus")
                 }
@@ -135,30 +140,11 @@ struct TripDetailView: View {
         }
     }
 
-    private func presentNativeShareSheet() {
-        Task {
-            let link = await TripLinkService.shared.link(for: viewModel.trip)
-            let message = "Join my group '\(viewModel.trip.name)' on Ledgex: \(link.absoluteString)"
-            let activityItems: [Any] = [message, link]
-
-            await MainActor.run {
-                if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
-                   let viewController = scene.windows.first?.rootViewController {
-                    let activityVC = UIActivityViewController(activityItems: activityItems, applicationActivities: nil)
-
-                    if let presented = viewController.presentedViewController {
-                        presented.present(activityVC, animated: true)
-                    } else {
-                        viewController.present(activityVC, animated: true)
-                    }
-                }
-            }
-        }
-    }
 }
 
 struct TripSettingsView: View {
     @ObservedObject var viewModel: ExpenseViewModel
+    @EnvironmentObject private var authViewModel: AuthViewModel
     @Environment(\.dismiss) var dismiss
     @State private var inviteURL: URL?
     @State private var isGeneratingLink = true
@@ -172,6 +158,7 @@ struct TripSettingsView: View {
     @State private var showingDeleteConfirmation = false
     @State private var activeGroupAction: GroupAction?
     @State private var reportTarget: ReportTarget?
+    @State private var showingAccountDeletion = false
 
     private var shareURL: URL {
         inviteURL ?? TripLinkService.fallbackLink(for: viewModel.trip)
@@ -196,6 +183,7 @@ struct TripSettingsView: View {
                 inviteOptionsSection
                 safetySection
                 groupActionsSection
+                accountManagementSection
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Group Settings")
@@ -258,6 +246,10 @@ struct TripSettingsView: View {
         }
         .sheet(item: $reportTarget) { target in
             ReportContentSheet(target: target)
+        }
+        .sheet(isPresented: $showingAccountDeletion) {
+            AccountDeletionView()
+                .environmentObject(authViewModel)
         }
     }
     
@@ -341,6 +333,29 @@ struct TripSettingsView: View {
             Text("Group Actions")
         } footer: {
             Text("Leaving removes you from the group on every device. Deleting permanently removes the group and all data for everyone.")
+        }
+    }
+
+    private var accountManagementSection: some View {
+        Section {
+            Button {
+                showingAccountDeletion = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "person.crop.circle.badge.xmark")
+                        .foregroundColor(.red)
+                    Text("Delete My Account")
+                        .foregroundColor(.primary)
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(Color(.tertiaryLabel))
+                }
+            }
+            .disabled(activeGroupAction != nil)
+        } header: {
+            Text("Account Management")
+        } footer: {
+            Text("Delete your Ledgex account even if you created this group. You'll be signed out everywhere.")
         }
     }
 

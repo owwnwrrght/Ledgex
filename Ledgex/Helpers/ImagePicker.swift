@@ -10,7 +10,21 @@ struct ImagePicker: UIViewControllerRepresentable {
     func makeUIViewController(context: Context) -> UIImagePickerController {
         let picker = UIImagePickerController()
         picker.delegate = context.coordinator
-        picker.sourceType = sourceType
+        if UIImagePickerController.isSourceTypeAvailable(sourceType) {
+            picker.sourceType = sourceType
+        } else {
+            print("[ImagePicker] Requested source \(sourceType.rawValue) unavailable. Falling back to photo library.")
+            picker.sourceType = .photoLibrary
+        }
+        if picker.sourceType == .camera {
+            if UIImagePickerController.isCameraDeviceAvailable(.rear) {
+                picker.cameraDevice = .rear
+            }
+            picker.cameraCaptureMode = .photo
+            picker.modalPresentationStyle = .fullScreen
+        } else {
+            picker.modalPresentationStyle = .automatic
+        }
         picker.allowsEditing = false
         return picker
     }
@@ -46,36 +60,65 @@ struct ImagePicker: UIViewControllerRepresentable {
 struct MultiImagePicker: View {
     @Binding var images: [UIImage]
     @State private var showingImagePicker = false
-    @State private var showingActionSheet = false
+    @State private var showingSourceOptions = false
+    @State private var imagePickerSourceType: UIImagePickerController.SourceType = .photoLibrary
     
     var body: some View {
         Button(action: {
-            if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                showingActionSheet = true
-            } else {
+            let cameraAvailable = UIImagePickerController.isSourceTypeAvailable(.camera)
+            let libraryAvailable = UIImagePickerController.isSourceTypeAvailable(.photoLibrary)
+
+            if cameraAvailable {
+                showingSourceOptions = true
+            } else if libraryAvailable {
+                imagePickerSourceType = .photoLibrary
                 showingImagePicker = true
+            } else {
+                print("[MultiImagePicker] No available image sources on this device.")
             }
         }) {
             Label("Add Receipt Photos", systemImage: "camera.fill")
                 .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
-        .actionSheet(isPresented: $showingActionSheet) {
-            ActionSheet(
-                title: Text("Select Photo Source"),
-                buttons: [
-                    .default(Text("Camera")) {
-                        showingImagePicker = true
-                    },
-                    .default(Text("Photo Library")) {
-                        showingImagePicker = true
-                    },
-                    .cancel()
-                ]
+        .confirmationDialog(
+            "Select Photo Source",
+            isPresented: $showingSourceOptions,
+            titleVisibility: .visible
+        ) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Camera") {
+                    imagePickerSourceType = .camera
+                    showingImagePicker = true
+                }
+            }
+            if UIImagePickerController.isSourceTypeAvailable(.photoLibrary) {
+                Button("Photo Library") {
+                    imagePickerSourceType = .photoLibrary
+                    showingImagePicker = true
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { showingImagePicker && imagePickerSourceType != .camera },
+                set: { showingImagePicker = $0 }
+            )
+        ) {
+            ImagePicker(
+                images: $images,
+                sourceType: imagePickerSourceType == .camera ? .photoLibrary : imagePickerSourceType
             )
         }
-        .sheet(isPresented: $showingImagePicker) {
-            ImagePicker(images: $images, sourceType: .photoLibrary)
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { showingImagePicker && imagePickerSourceType == .camera },
+                set: { showingImagePicker = $0 }
+            )
+        ) {
+            ImagePicker(images: $images, sourceType: .camera)
+                .ignoresSafeArea()
         }
     }
 }

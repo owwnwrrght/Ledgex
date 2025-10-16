@@ -11,7 +11,7 @@ struct SignInView: View {
             VStack(spacing: 12) {
                 Image(systemName: "person.3.sequence")
                     .font(.system(size: 72, weight: .regular))
-                    .foregroundColor(.blue)
+                    .foregroundStyle(LinearGradient.ledgexAccentBorder)
                 Text("Sign in to Ledgex")
                     .font(.title)
                     .fontWeight(.bold)
@@ -104,8 +104,9 @@ struct SignInView: View {
                                 }
                             }
                             .padding(8)
-                            .background(Color(uiColor: .secondarySystemBackground))
+                            .background(Color(.secondarySystemBackground).opacity(0.85))
                             .cornerRadius(8)
+                            .ledgexOutlined(cornerRadius: 8)
                         }
                         .frame(maxHeight: 200)
                         .padding(.horizontal)
@@ -115,7 +116,7 @@ struct SignInView: View {
             Spacer()
         }
         .padding()
-        .background(Color(uiColor: .systemBackground))
+        .ledgexBackground()
     }
 
     private var emailSignInForm: some View {
@@ -126,14 +127,16 @@ struct SignInView: View {
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
                 .padding()
-                .background(Color(uiColor: .secondarySystemBackground))
-                .cornerRadius(10)
+                .background(Color(.secondarySystemBackground).opacity(0.92))
+                .cornerRadius(12)
+                .ledgexOutlined(cornerRadius: 12)
 
             SecureField("Password", text: $authViewModel.password)
                 .textContentType(.password)
                 .padding()
-                .background(Color(uiColor: .secondarySystemBackground))
-                .cornerRadius(10)
+                .background(Color(.secondarySystemBackground).opacity(0.92))
+                .cornerRadius(12)
+                .ledgexOutlined(cornerRadius: 12)
 
             Button(action: authViewModel.signInWithEmail) {
                 Text("Sign In")
@@ -141,8 +144,9 @@ struct SignInView: View {
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding()
-                    .background(Color.blue)
-                    .cornerRadius(12)
+                    .background(LinearGradient.ledgexCallToAction)
+                    .cornerRadius(14)
+                    .shadow(color: Color.purple.opacity(0.18), radius: 8, x: 0, y: 6)
             }
             .disabled(authViewModel.isProcessing)
 

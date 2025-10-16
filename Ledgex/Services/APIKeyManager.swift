@@ -1,35 +1,58 @@
 import Foundation
 
+enum APIKeyError: LocalizedError {
+    case secretsFileMissing
+    case keyMissing(String)
+    
+    var errorDescription: String? {
+        switch self {
+        case .secretsFileMissing:
+            return "Secrets.plist is missing from the app bundle."
+        case .keyMissing(let key):
+            return "Missing value for \(key) in Secrets.plist."
+        }
+    }
+}
+
 class APIKeyManager {
     static let shared = APIKeyManager()
-    private let config: NSDictionary
+    private let config: NSDictionary?
     
     private init() {
-        guard let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
-              let dict = NSDictionary(contentsOfFile: path) else {
-            fatalError("Secrets.plist not found or unreadable")
+        if let path = Bundle.main.path(forResource: "Secrets", ofType: "plist"),
+           let dict = NSDictionary(contentsOfFile: path) {
+            config = dict
+        } else {
+            config = nil
+            assertionFailure("Secrets.plist not found or unreadable. Falling back to safe defaults.")
+            print("⚠️ [APIKeyManager] Secrets.plist not found or unreadable. Sensitive features will be disabled.")
         }
-        config = dict
     }
     
     private func string(for key: String) -> String? {
-        guard let value = config[key] as? String else { return nil }
+        guard let config,
+              let value = config[key] as? String else { return nil }
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? nil : trimmed
     }
     
-    var openAIKey: String {
+    func openAIKey() throws -> String {
+        guard config != nil else {
+            throw APIKeyError.secretsFileMissing
+        }
         guard let key = string(for: "OPENAI_API_KEY") else {
-            fatalError("Missing OPENAI_API_KEY in Secrets.plist")
+            throw APIKeyError.keyMissing("OPENAI_API_KEY")
         }
         return key
     }
     
     var tripInviteFunctionURL: URL? {
         guard let urlString = string(for: "TRIP_INVITE_FUNCTION_URL"),
-              urlString.contains("http") else {
+              let url = URL(string: urlString),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else {
             return nil
         }
-        return URL(string: urlString)
+        return url
     }
 }

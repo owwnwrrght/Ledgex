@@ -21,7 +21,7 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     }
     enum PendingAction {
         case signIn
-        case reauthenticateDelete
+        case accountDeletionReauth
     }
 
     enum AuthErrorStage: String {
@@ -45,6 +45,7 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     @Published var isProcessing = false
     @Published var errorMessage: String?
     @Published var detailedErrorLog: [String] = []
+    @Published var showAccountDeletionReauthSheet = false
     @Published var requiresEmailReauth = false
     @Published var reauthEmail: String = ""
     @Published var reauthPassword: String = ""
@@ -110,6 +111,22 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         configure(request: request, requestFullName: true)
         print("🔐 [Auth] Request configured with nonce: \(currentNonce?.prefix(8) ?? "nil")...")
         logError(stage: .initialization, message: "Request configured successfully with nonce")
+    }
+
+    func prepareAccountDeletionReauthRequest(_ request: ASAuthorizationAppleIDRequest) {
+        print("🔐 [Auth] prepareAccountDeletionReauthRequest called")
+        detailedErrorLog = []
+        authStartTime = Date()
+        pendingAction = .accountDeletionReauth
+        configure(request: request, requestFullName: false)
+        print("🔐 [Auth] Reauth request configured")
+    }
+
+    func cancelAccountDeletionReauth() {
+        print("🔐 [Auth] Canceling account deletion reauth sheet")
+        showAccountDeletionReauthSheet = false
+        pendingAction = .signIn
+        isProcessing = false
     }
     
     func switchToEmailFlow() {
@@ -204,38 +221,10 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
                 print("🔐 [Auth] ASAuthorizationError code: \(authError.code.rawValue)")
                 logError(stage: .appleAuthorization, message: "ASAuthorizationError code: \(authError.code.rawValue)")
 
-                let detailedMessage: String
-                switch authError.code {
-                case .canceled:
-                    print("🔐 [Auth] User canceled the authorization")
-                    detailedMessage = "User canceled (code 1001) - This may indicate the Apple Sign In sheet never appeared"
-                    logError(stage: .systemPermissions, message: "Check: Is device signed into iCloud?")
-                    logError(stage: .systemPermissions, message: "Check: Are system permissions granted?")
-                case .failed:
-                    print("🔐 [Auth] Authorization failed")
-                    detailedMessage = "Authorization failed (code 1004) - System authentication error"
-                case .invalidResponse:
-                    print("🔐 [Auth] Invalid response")
-                    detailedMessage = "Invalid response (code 1003) - Received invalid data from Apple"
-                case .notHandled:
-                    print("🔐 [Auth] Authorization not handled")
-                    detailedMessage = "Not handled (code 1002) - Authorization request not processed"
-                case .notInteractive:
-                    print("🔐 [Auth] Not interactive")
-                    detailedMessage = "Not interactive - Cannot show UI for authentication"
-                case .matchedExcludedCredential:
-                    print("🔐 [Auth] Matched excluded credential")
-                    detailedMessage = "Matched excluded credential"
-                case .unknown:
-                    print("🔐 [Auth] Unknown error")
-                    detailedMessage = "Unknown error (code 1000) - Unspecified authentication failure"
-                @unknown default:
-                    print("🔐 [Auth] Unhandled error code: \(authError.code.rawValue)")
-                    detailedMessage = "Unhandled authorization error (code \(authError.code.rawValue))"
-                }
-
-                logError(stage: .appleAuthorization, message: detailedMessage)
-                errorMessage = detailedMessage
+                let (userMessage, debugMessage) = messages(for: authError)
+                logError(stage: .appleAuthorization, message: debugMessage)
+                errorMessage = userMessage
+                isProcessing = false
 
                 // Check for underlying errors
                 if let underlyingError = (error as NSError).userInfo[NSUnderlyingErrorKey] as? NSError {
@@ -247,9 +236,16 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
                 logError(stage: .appleAuthorization, message: "NSError domain: \(nsError.domain)")
                 logError(stage: .appleAuthorization, message: "NSError code: \(nsError.code)")
                 logError(stage: .appleAuthorization, message: "UserInfo: \(nsError.userInfo)")
-                errorMessage = error.localizedDescription
+                let userMessage = userFacingMessage(for: nsError)
+                if userMessage == nil && nsError.domain == ASAuthorizationError.errorDomain {
+                    errorMessage = nil
+                } else {
+                    errorMessage = userMessage ?? error.localizedDescription
+                }
+                isProcessing = false
             } else {
-                errorMessage = error.localizedDescription
+                errorMessage = "Sign in with Apple is unavailable right now. Please try again."
+                isProcessing = false
             }
         }
     }
@@ -275,6 +271,7 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
             errorMessage = nil
             detailedErrorLog = []
             pendingAction = .signIn
+            showAccountDeletionReauthSheet = false
             requiresEmailReauth = false
             reauthPassword = ""
             emailReauthError = nil
@@ -308,33 +305,119 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
 
         print("✅ All user data cleaned up")
     }
-    
+
     func initiateAccountDeletion() {
         guard let user = Auth.auth().currentUser else {
             errorMessage = "No signed in user."
             return
         }
-        pendingAction = .reauthenticateDelete
-        let providerIDs = user.providerData.map { $0.providerID }
+        errorMessage = nil
+        emailReauthError = nil
+        requiresEmailReauth = false
+        showAccountDeletionReauthSheet = false
+        reauthPassword = ""
+        isProcessing = false
+
+        let providerIDs = Set(user.providerData.map { $0.providerID })
 
         if providerIDs.contains("password") {
-            isProcessing = false
-            emailReauthError = nil
             reauthEmail = user.email ?? email
-            reauthPassword = ""
             requiresEmailReauth = true
             return
         }
 
-        let provider = ASAuthorizationAppleIDProvider()
-        let request = provider.createRequest()
-        configure(request: request, requestFullName: false)
-        let controller = ASAuthorizationController(authorizationRequests: [request])
-        controller.delegate = self
-        controller.presentationContextProvider = self
-        authorizationController = controller
+        if providerIDs.contains("apple.com") {
+            pendingAction = .accountDeletionReauth
+            showAccountDeletionReauthSheet = true
+            return
+        }
+
         isProcessing = true
-        controller.performRequests()
+        Task { await deleteAccountWithoutReauth() }
+    }
+
+    private func deleteAccountWithoutReauth() async {
+        guard let user = Auth.auth().currentUser else {
+            await MainActor.run {
+                self.isProcessing = false
+                self.errorMessage = "No signed in user."
+            }
+            return
+        }
+
+        print("🔐 [Auth] Starting direct account deletion (no reauth)...")
+
+        // Remove user data in Firestore before deleting the auth record
+        if let profile = ProfileManager.shared.currentProfile {
+            do {
+                try await FirebaseManager.shared.removeUserData(for: profile)
+                print("✅ User data removed from Firestore")
+            } catch {
+                print("⚠️ Error removing user data from Firestore: \(error.localizedDescription)")
+                // Continue even if cleanup fails so users aren't blocked
+            }
+        }
+
+        do {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                user.delete { error in
+                    if let error {
+                        continuation.resume(throwing: error)
+                    } else {
+                        continuation.resume(returning: ())
+                    }
+                }
+            }
+
+            print("✅ Firebase Auth account deleted without reauth")
+            try? Auth.auth().signOut()
+
+            await cleanupUserData()
+            NotificationCenter.default.post(name: .ledgexUserDidDeleteAccount, object: nil)
+
+            await MainActor.run {
+                self.isSignedIn = false
+                self.errorMessage = nil
+                self.detailedErrorLog = []
+                self.pendingAction = .signIn
+                self.isProcessing = false
+            }
+
+            print("✅ Account deletion flow completed")
+        } catch {
+            print("❌ Account deletion failed without reauth: \(error.localizedDescription)")
+
+            if let nsError = error as NSError?,
+               let code = AuthErrorCode(rawValue: nsError.code),
+               code == .requiresRecentLogin {
+                print("⚠️ Account deletion requires recent login. Prompting reauthentication.")
+                let providerIDs = user.providerData.map { $0.providerID }
+
+                await MainActor.run {
+                    self.isProcessing = false
+                }
+
+                if providerIDs.contains("password") {
+                    await MainActor.run {
+                        self.reauthEmail = user.email ?? self.email
+                        self.reauthPassword = ""
+                        self.emailReauthError = nil
+                        self.requiresEmailReauth = true
+                    }
+                } else {
+                    await MainActor.run {
+                        self.pendingAction = .accountDeletionReauth
+                        self.showAccountDeletionReauthSheet = true
+                    }
+                }
+                return
+            } else {
+                await MainActor.run {
+                    self.isProcessing = false
+                    self.errorMessage = error.localizedDescription
+                }
+            }
+        }
     }
     
     // MARK: - ASAuthorizationControllerDelegate
@@ -382,35 +465,20 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
                 print("🔐 [Auth-Delegate] ASAuthorizationError code: \(authError.code.rawValue)")
                 logError(stage: .appleAuthorization, message: "[Delegate] ASAuthorizationError code: \(authError.code.rawValue)")
 
-                let detailedMessage: String
-                switch authError.code {
-                case .canceled:
-                    detailedMessage = "[Delegate] User canceled (1001)"
-                    logError(stage: .systemPermissions, message: "[Delegate] Possible causes: Sheet didn't appear, iCloud not signed in, system error")
-                case .failed:
-                    detailedMessage = "[Delegate] Authorization failed (1004)"
-                case .invalidResponse:
-                    detailedMessage = "[Delegate] Invalid response (1003)"
-                case .notHandled:
-                    detailedMessage = "[Delegate] Not handled (1002)"
-                case .notInteractive:
-                    detailedMessage = "[Delegate] Not interactive"
-                case .matchedExcludedCredential:
-                    detailedMessage = "[Delegate] Matched excluded credential"
-                case .unknown:
-                    detailedMessage = "[Delegate] Unknown error (1000)"
-                @unknown default:
-                    detailedMessage = "[Delegate] Unhandled code: \(authError.code.rawValue)"
-                }
-
-                logError(stage: .appleAuthorization, message: detailedMessage)
-                self.errorMessage = detailedMessage
+                let (userMessage, debugMessage) = messages(for: authError, prefix: "[Delegate]")
+                logError(stage: .appleAuthorization, message: debugMessage)
+                self.errorMessage = userMessage
             } else if let nsError = error as NSError? {
                 logError(stage: .appleAuthorization, message: "[Delegate] NSError domain: \(nsError.domain)")
                 logError(stage: .appleAuthorization, message: "[Delegate] NSError code: \(nsError.code)")
-                self.errorMessage = error.localizedDescription
+                let userMessage = userFacingMessage(for: nsError)
+                if userMessage == nil && nsError.domain == ASAuthorizationError.errorDomain {
+                    self.errorMessage = nil
+                } else {
+                    self.errorMessage = userMessage ?? "Sign in with Apple is unavailable right now. Please try again."
+                }
             } else {
-                self.errorMessage = error.localizedDescription
+                self.errorMessage = "Sign in with Apple is unavailable right now. Please try again."
             }
 
             self.isProcessing = false
@@ -517,31 +585,41 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
                 print("🔐 [Auth] Starting async authentication task...")
                 logError(stage: .firebaseSignIn, message: "Starting Firebase authentication...")
 
-                switch pendingAction {
+                switch self.pendingAction {
                 case .signIn:
                     print("🔐 [Auth] Executing sign-in flow...")
                     logError(stage: .firebaseSignIn, message: "Flow: New sign-in")
-                    try await authenticateWithFirebase(credential: firebaseCredential, appleCredential: credential)
+                    try await self.authenticateWithFirebase(credential: firebaseCredential, appleCredential: credential)
                     print("🔐 [Auth] ✅ Sign-in completed successfully")
                     logError(stage: .firebaseSignIn, message: "✅ Firebase sign-in successful")
-                case .reauthenticateDelete:
+
+                    let totalElapsed = authStartTime.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "?"
+                    logError(stage: .profileSetup, message: "✅ COMPLETE - Total time: \(totalElapsed)s")
+
+                    await MainActor.run {
+                        print("🔐 [Auth] Cleaning up after successful auth")
+                        self.currentNonce = nil
+                        self.authorizationController = nil
+                        self.errorMessage = nil
+                        self.isProcessing = false
+                        self.showAccountDeletionReauthSheet = false
+                        self.pendingAction = .signIn
+                    }
+
+                case .accountDeletionReauth:
                     print("🔐 [Auth] Executing reauthenticate-delete flow...")
                     logError(stage: .firebaseSignIn, message: "Flow: Reauthenticate for deletion")
-                    try await reauthenticateAndDelete(credential: firebaseCredential)
-                    print("🔐 [Auth] ✅ Reauthentication completed successfully")
-                    logError(stage: .firebaseSignIn, message: "✅ Reauthentication successful")
-                }
+                    try await self.reauthenticateAndDelete(credential: firebaseCredential)
 
-                let totalElapsed = authStartTime.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "?"
-                logError(stage: .profileSetup, message: "✅ COMPLETE - Total time: \(totalElapsed)s")
-
-                await MainActor.run {
-                    print("🔐 [Auth] Cleaning up after successful auth")
-                    self.currentNonce = nil
-                    self.authorizationController = nil
-                    self.isProcessing = false
-                    self.errorMessage = nil
-                    self.pendingAction = .signIn
+                    await MainActor.run {
+                        self.currentNonce = nil
+                        self.authorizationController = nil
+                        self.errorMessage = nil
+                        self.showAccountDeletionReauthSheet = false
+                        self.pendingAction = .signIn
+                        self.isProcessing = false
+                    }
+                    return
                 }
             } catch {
                 print("🔐 [Auth] ❌ Authentication error: \(error)")
@@ -720,6 +798,7 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         errorMessage = nil
         detailedErrorLog = []
         pendingAction = .signIn
+        isProcessing = false
 
         print("✅ Account deletion complete")
     }
@@ -967,6 +1046,84 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         // Post notification to trigger trip sync and other post-signin tasks
         print("🔐 [Auth] ✅ Sign-in completed successfully")
         NotificationCenter.default.post(name: .ledgexUserDidSignIn, object: nil)
+    }
+
+    private func messages(for authError: ASAuthorizationError, prefix: String = "") -> (userFacing: String?, debug: String) {
+        let debugPrefix = prefix.isEmpty ? "" : "\(prefix) "
+        switch authError.code {
+        case .canceled:
+            logError(stage: .systemPermissions, message: "\(debugPrefix)Sign in with Apple canceled by user (1001)")
+            logError(stage: .systemPermissions, message: "\(debugPrefix)Verify device is signed into iCloud and allows Apple ID sign-in")
+            return (nil, "\(debugPrefix)User canceled Sign in with Apple (1001)")
+        case .failed:
+            return ("Sign in with Apple couldn’t finish. Please try again in a moment.", "\(debugPrefix)Authorization failed (1004) - System authentication error")
+        case .invalidResponse:
+            return ("We couldn’t verify Apple’s response. Please try again.", "\(debugPrefix)Invalid response (1003) - Received invalid data from Apple")
+        case .notHandled:
+            return ("Sign in with Apple wasn’t completed. Please try again.", "\(debugPrefix)Not handled (1002) - Authorization request not processed")
+        case .notInteractive:
+            logError(stage: .systemPermissions, message: "\(debugPrefix)Sign in with Apple UI could not be presented. Check foreground window scene.")
+            return ("Sign in with Apple needs the app in the foreground. Please bring Ledgex forward and try again.", "\(debugPrefix)Not interactive - Cannot present authentication UI")
+        case .matchedExcludedCredential:
+            return ("Sign in with Apple isn’t available for this Apple ID. You can sign in with email instead.", "\(debugPrefix)Matched excluded credential")
+        case .unknown:
+            return ("Sign in with Apple hit an unexpected issue. Please try again.", "\(debugPrefix)Unknown error (1000) - Unspecified authentication failure")
+        @unknown default:
+            return ("Sign in with Apple hit an unexpected issue. Please try again.", "\(debugPrefix)Unhandled authorization error (code \(authError.code.rawValue))")
+        }
+    }
+
+    private func userFacingMessage(for nsError: NSError) -> String? {
+        if nsError.domain == NSURLErrorDomain {
+            switch nsError.code {
+            case NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost:
+                return "We couldn’t reach the internet. Check your connection and try again."
+            case NSURLErrorTimedOut:
+                return "The connection timed out. Please try again."
+            default:
+                return "We ran into a network issue. Please try again."
+            }
+        }
+
+        if nsError.domain == ASAuthorizationError.errorDomain,
+           let authCode = ASAuthorizationError.Code(rawValue: nsError.code) {
+            switch authCode {
+            case .canceled:
+                return nil
+            case .failed:
+                return "Sign in with Apple couldn’t finish. Please try again in a moment."
+            case .invalidResponse:
+                return "We couldn’t verify Apple’s response. Please try again."
+            case .notHandled:
+                return "Sign in with Apple wasn’t completed. Please try again."
+            case .notInteractive:
+                return "Sign in with Apple needs the app in the foreground. Please bring Ledgex forward and try again."
+            case .matchedExcludedCredential:
+                return "Sign in with Apple isn’t available for this Apple ID. You can sign in with email instead."
+            case .unknown:
+                return "Sign in with Apple hit an unexpected issue. Please try again."
+            @unknown default:
+                return "Sign in with Apple hit an unexpected issue. Please try again."
+            }
+        }
+
+        if nsError.domain == AuthErrorDomain,
+           let authCode = AuthErrorCode(rawValue: nsError.code) {
+            switch authCode {
+            case .accountExistsWithDifferentCredential:
+                return "An account already exists with a different sign-in method. Try email instead."
+            case .networkError:
+                return "We couldn’t reach the server. Check your connection and try again."
+            case .appNotAuthorized:
+                return "This build isn’t authorized for Sign in with Apple. Please use the App Store version."
+            case .webContextAlreadyPresented, .webContextCancelled:
+                return nil
+            default:
+                return "Sign in with Apple hit an unexpected issue. Please try again."
+            }
+        }
+
+        return nil
     }
     
     private func randomNonceString(length: Int = 32) -> String {

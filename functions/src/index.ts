@@ -236,6 +236,64 @@ export const joinTrip = onRequest({
   }
 });
 
+export const forceDeleteAccount = onRequest({
+  region: "us-central1",
+}, async (req, res) => {
+  if (req.method !== "POST") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
+
+  try {
+    const authHeader = req.headers.authorization ?? req.headers.Authorization;
+    if (typeof authHeader !== "string" || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({ error: "unauthorized", message: "Missing or invalid authorization token." });
+      return;
+    }
+
+    const idToken = authHeader.slice("Bearer ".length);
+    let decodedToken: admin.auth.DecodedIdToken;
+    try {
+      decodedToken = await admin.auth().verifyIdToken(idToken);
+    } catch (error) {
+      logger.warn("forceDeleteAccount: invalid ID token", error as Error);
+      res.status(401).json({ error: "unauthorized", message: "Invalid authorization token." });
+      return;
+    }
+
+    const uid = decodedToken.uid;
+
+    // Delete primary user document if it exists
+    try {
+      const directDoc = await db.collection("users").doc(uid).get();
+      if (directDoc.exists) {
+        await directDoc.ref.delete();
+      } else {
+        const byUidSnapshot = await db.collection("users").where("firebaseUID", "==", uid).limit(1).get();
+        if (!byUidSnapshot.empty) {
+          await byUidSnapshot.docs[0].ref.delete();
+        }
+      }
+    } catch (error) {
+      logger.warn("forceDeleteAccount: failed to remove user document", error as Error);
+    }
+
+    try {
+      await admin.auth().deleteUser(uid);
+      logger.info("forceDeleteAccount: deleted auth user", { uid });
+    } catch (error) {
+      logger.error("forceDeleteAccount: failed to delete auth user", error as Error);
+      res.status(500).json({ error: "delete_failed", message: "Failed to delete account. Try again later." });
+      return;
+    }
+
+    res.json({ status: "deleted" });
+  } catch (error) {
+    logger.error("forceDeleteAccount: unexpected error", error as Error);
+    res.status(500).json({ error: "internal", message: "Unexpected error while deleting account." });
+  }
+});
+
 export const onTripUpdated = onDocumentUpdated("trips/{tripId}", async (event) => {
   const beforeData = event.data?.before.data() as TripDoc | undefined;
   const afterData = event.data?.after.data() as TripDoc | undefined;

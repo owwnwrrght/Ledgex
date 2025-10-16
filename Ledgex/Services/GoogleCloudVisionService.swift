@@ -46,8 +46,13 @@ class GoogleCloudVisionService {
     
     private func validateConfiguration() throws {
         // Only need OpenAI API key now
-        _ = APIKeyManager.shared.openAIKey // This will throw if key is missing
-        print("✅ OpenAI API key found")
+        do {
+            _ = try APIKeyManager.shared.openAIKey()
+            print("✅ OpenAI API key found")
+        } catch {
+            print("⚠️ OpenAI API key missing: \(error.localizedDescription)")
+            throw OCRError.configurationMissing
+        }
     }
     
     // MARK: - Main Receipt Processing Function
@@ -63,7 +68,13 @@ class GoogleCloudVisionService {
     
     // MARK: - OpenAI Vision Receipt Processing
     private func processReceiptWithOpenAIVision(image: UIImage) async throws -> OCRResult {
-        let openAIKey = APIKeyManager.shared.openAIKey
+        let openAIKey: String
+        do {
+            openAIKey = try APIKeyManager.shared.openAIKey()
+        } catch {
+            print("⚠️ Missing OpenAI key – receipt scanning disabled: \(error.localizedDescription)")
+            throw OCRError.configurationMissing
+        }
         
         guard let imageData = image.jpegData(compressionQuality: 0.8) else {
             throw OCRError.imageConversionFailed

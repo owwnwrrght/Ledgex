@@ -13,16 +13,21 @@ struct ContentView: View {
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     
     var body: some View {
-        Group {
-            if authViewModel.isSignedIn {
-                if let profile = profileManager.currentProfile,
-                   !profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    adaptiveTripInterface
+        ZStack {
+            LinearGradient.ledgexBackground
+                .ignoresSafeArea()
+
+            Group {
+                if authViewModel.isSignedIn {
+                    if let profile = profileManager.currentProfile,
+                       !profile.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        adaptiveTripInterface
+                    } else {
+                        ProfileSetupView()
+                    }
                 } else {
-                    ProfileSetupView()
+                    SignInView()
                 }
-            } else {
-                SignInView()
             }
         }
         .task(id: authViewModel.isSignedIn) {

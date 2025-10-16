@@ -1,4 +1,5 @@
 import SwiftUI
+import AuthenticationServices
 
 struct ProfileSetupView: View {
     @ObservedObject var profileManager = ProfileManager.shared
@@ -160,102 +161,150 @@ struct ProfileView: View {
         } message: {
             Text("This will permanently remove your Ledgex account and associated data.")
         }
-        .sheet(isPresented: Binding(
-            get: { authViewModel.requiresEmailReauth },
-            set: { if !$0 { authViewModel.cancelEmailReauth() } }
-        )) {
-            EmailReauthSheet(authViewModel: authViewModel)
+        .sheet(isPresented: $authViewModel.showAccountDeletionReauthSheet) {
+            AccountDeletionReauthSheet()
+                .environmentObject(authViewModel)
+        }
+        .sheet(isPresented: $authViewModel.requiresEmailReauth) {
+            EmailAccountDeletionReauthSheet()
+                .environmentObject(authViewModel)
         }
     }
 }
 
-private struct EmailReauthSheet: View {
-    @ObservedObject var authViewModel: AuthViewModel
-    @FocusState private var passwordFocused: Bool
+struct AccountDeletionReauthSheet: View {
+    @EnvironmentObject private var authViewModel: AuthViewModel
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationView {
             VStack(spacing: 20) {
-                VStack(spacing: 8) {
-                    Text("Confirm Password")
-                        .font(.title3)
-                        .fontWeight(.semibold)
+                Image(systemName: "lock.shield")
+                    .font(.system(size: 48, weight: .thin))
+                    .foregroundColor(.blue)
 
-                    Text("Enter your password to delete your Ledgex account.")
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
+                Text("Confirm Account Deletion")
+                    .font(.title2)
+                    .fontWeight(.semibold)
+
+                Text("For your security, Apple needs to confirm it's really you before we remove your Ledgex account.")
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal)
+
+                if authViewModel.isProcessing {
+                    ProgressView("Verifying…")
+                }
+
+                SignInWithAppleButton(.continue) { request in
+                    authViewModel.prepareAccountDeletionReauthRequest(request)
+                } onCompletion: { result in
+                    authViewModel.handleSignInCompletion(result)
+                }
+                .signInWithAppleButtonStyle(.black)
+                .frame(height: 50)
+                .cornerRadius(12)
+                .disabled(authViewModel.isProcessing)
+
+                if let message = authViewModel.errorMessage, !message.isEmpty {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundColor(.red)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal)
                 }
 
-                VStack(alignment: .leading, spacing: 12) {
-                    TextField("Email", text: Binding(
-                        get: { authViewModel.reauthEmail },
-                        set: { authViewModel.reauthEmail = $0 }
-                    ))
+                Button("Cancel", role: .cancel) {
+                    authViewModel.cancelAccountDeletionReauth()
+                    dismiss()
+                }
+                .disabled(authViewModel.isProcessing)
+
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Reauthenticate")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .onDisappear {
+            authViewModel.cancelAccountDeletionReauth()
+        }
+        .interactiveDismissDisabled(authViewModel.isProcessing)
+    }
+}
+
+struct EmailAccountDeletionReauthSheet: View {
+    @EnvironmentObject private var authViewModel: AuthViewModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationView {
+            VStack(spacing: 16) {
+                Image(systemName: "envelope.badge.shield.leadinghalf.fill")
+                    .font(.system(size: 48, weight: .regular))
+                    .foregroundColor(.blue)
+
+                Text("Confirm With Password")
+                    .font(.title3)
+                    .fontWeight(.semibold)
+
+                Text("Enter your email and password to confirm account deletion.")
+                    .font(.body)
+                    .multilineTextAlignment(.center)
+                    .foregroundColor(.secondary)
+                    .padding(.horizontal)
+
+                TextField("Email", text: $authViewModel.reauthEmail)
                     .textContentType(.emailAddress)
                     .keyboardType(.emailAddress)
                     .autocapitalization(.none)
                     .disableAutocorrection(true)
-                    .padding(12)
+                    .padding()
                     .background(Color(uiColor: .secondarySystemBackground))
-                    .cornerRadius(12)
-                    .disabled(true)
+                    .cornerRadius(10)
+                    .disabled(authViewModel.isProcessing)
 
-                    SecureField("Password", text: Binding(
-                        get: { authViewModel.reauthPassword },
-                        set: { authViewModel.reauthPassword = $0 }
-                    ))
+                SecureField("Password", text: $authViewModel.reauthPassword)
                     .textContentType(.password)
-                    .padding(12)
+                    .padding()
                     .background(Color(uiColor: .secondarySystemBackground))
-                    .cornerRadius(12)
-                    .focused($passwordFocused)
+                    .cornerRadius(10)
+                    .disabled(authViewModel.isProcessing)
 
-                    if let error = authViewModel.emailReauthError, !error.isEmpty {
-                        Text(error)
-                            .font(.footnote)
-                            .foregroundColor(.red)
-                    }
+                if let message = authViewModel.emailReauthError, !message.isEmpty {
+                    Text(message)
+                        .font(.footnote)
+                        .foregroundColor(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
                 }
-                .padding(.horizontal)
 
                 if authViewModel.isProcessing {
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle())
+                    ProgressView("Deleting…")
                 }
 
-                HStack(spacing: 12) {
-                    Button("Cancel") {
-                        authViewModel.cancelEmailReauth()
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color(uiColor: .secondarySystemBackground))
-                    .cornerRadius(12)
-
-                    Button("Delete Account", role: .destructive) {
-                        authViewModel.confirmEmailAccountDeletion()
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(Color.red)
-                    .cornerRadius(12)
-                    .foregroundColor(.white)
-                    .disabled(authViewModel.isProcessing)
+                Button("Confirm Deletion", role: .destructive) {
+                    authViewModel.confirmEmailAccountDeletion()
                 }
-                .padding(.horizontal)
+                .disabled(authViewModel.isProcessing)
+                .buttonStyle(.borderedProminent)
+
+                Button("Cancel", role: .cancel) {
+                    authViewModel.cancelEmailReauth()
+                    dismiss()
+                }
+                .disabled(authViewModel.isProcessing)
 
                 Spacer()
             }
-            .padding(.top, 32)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") {
-                        authViewModel.cancelEmailReauth()
-                    }
-                }
-            }
+            .padding()
+            .navigationTitle("Reauthenticate")
+            .navigationBarTitleDisplayMode(.inline)
         }
+        .onDisappear {
+            authViewModel.cancelEmailReauth()
+        }
+        .interactiveDismissDisabled(authViewModel.isProcessing)
     }
 }

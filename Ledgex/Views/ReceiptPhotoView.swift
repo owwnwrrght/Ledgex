@@ -138,7 +138,7 @@ struct ImageViewer: View {
 struct ReceiptAttachmentView: View {
     @Binding var receiptImages: [UIImage]
     @State private var showingImagePicker = false
-    @State private var showingActionSheet = false
+    @State private var showingSourceOptions = false
     @State private var imagePickerSourceType: UIImagePickerController.SourceType = .photoLibrary
     
     var body: some View {
@@ -174,11 +174,16 @@ struct ReceiptAttachmentView: View {
             }
             
             Button(action: {
-                if UIImagePickerController.isSourceTypeAvailable(.camera) {
-                    showingActionSheet = true
-                } else {
+                let cameraAvailable = UIImagePickerController.isSourceTypeAvailable(.camera)
+                let libraryAvailable = UIImagePickerController.isSourceTypeAvailable(.photoLibrary)
+
+                if cameraAvailable {
+                    showingSourceOptions = true
+                } else if libraryAvailable {
                     imagePickerSourceType = .photoLibrary
                     showingImagePicker = true
+                } else {
+                    print("[ReceiptAttachmentView] No available image sources on this device.")
                 }
             }) {
                 Label("Add Receipt Photos", systemImage: "camera.fill")
@@ -188,24 +193,44 @@ struct ReceiptAttachmentView: View {
                     .cornerRadius(8)
             }
         }
-        .actionSheet(isPresented: $showingActionSheet) {
-            ActionSheet(
-                title: Text("Select Photo Source"),
-                buttons: [
-                    .default(Text("Camera")) {
-                        imagePickerSourceType = .camera
-                        showingImagePicker = true
-                    },
-                    .default(Text("Photo Library")) {
-                        imagePickerSourceType = .photoLibrary
-                        showingImagePicker = true
-                    },
-                    .cancel()
-                ]
+        .confirmationDialog(
+            "Select Photo Source",
+            isPresented: $showingSourceOptions,
+            titleVisibility: .visible
+        ) {
+            if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                Button("Camera") {
+                    imagePickerSourceType = .camera
+                    showingImagePicker = true
+                }
+            }
+            if UIImagePickerController.isSourceTypeAvailable(.photoLibrary) {
+                Button("Photo Library") {
+                    imagePickerSourceType = .photoLibrary
+                    showingImagePicker = true
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(
+            isPresented: Binding(
+                get: { showingImagePicker && imagePickerSourceType != .camera },
+                set: { showingImagePicker = $0 }
+            )
+        ) {
+            ImagePicker(
+                images: $receiptImages,
+                sourceType: imagePickerSourceType == .camera ? .photoLibrary : imagePickerSourceType
             )
         }
-        .sheet(isPresented: $showingImagePicker) {
-            ImagePicker(images: $receiptImages, sourceType: imagePickerSourceType)
+        .fullScreenCover(
+            isPresented: Binding(
+                get: { showingImagePicker && imagePickerSourceType == .camera },
+                set: { showingImagePicker = $0 }
+            )
+        ) {
+            ImagePicker(images: $receiptImages, sourceType: .camera)
+                .ignoresSafeArea()
         }
     }
 }

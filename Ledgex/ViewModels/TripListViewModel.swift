@@ -63,59 +63,67 @@ class TripListViewModel: ObservableObject {
             let remoteTrips = try await firebase.fetchUserTrips()
             print("🔄 [TripSync] Fetched \(remoteTrips.count) remote trips from Firestore")
 
-            if !remoteTrips.isEmpty {
-                print("📥 [TripSync] Syncing \(remoteTrips.count) trips from Firestore")
-                print("📥 [TripSync] Remote trip codes: \(remoteTrips.map { $0.code })")
+            guard !remoteTrips.isEmpty else {
+                print("ℹ️ [TripSync] No remote trips found; clearing local cache")
+                if !trips.isEmpty {
+                    print("🧹 [TripSync] Removing \(trips.count) locally cached trips not present in Firestore")
+                }
+                DataManager.shared.clearAllData()
+                trips = []
+                return
+            }
 
-                // Merge with local trips and migrate old data
-                var mergedTrips = trips
-                for var remoteTrip in remoteTrips {
-                    // Migration: Update people with Firebase UIDs if they match current user
-                    var needsMigration = false
-                    if let currentProfile = profileManager.currentProfile {
-                        for (index, person) in remoteTrip.people.enumerated() {
-                            // If this person matches the current user's profile but doesn't have a firebaseUID
-                            if person.id == currentProfile.id && person.firebaseUID == nil {
-                                print("🔄 [Migration] Adding Firebase UID to person \(person.name) in trip \(remoteTrip.code)")
-                                remoteTrip.people[index].firebaseUID = currentProfile.firebaseUID
-                                needsMigration = true
-                            }
-                        }
-                    }
+            print("📥 [TripSync] Syncing \(remoteTrips.count) trips from Firestore")
+            print("📥 [TripSync] Remote trip codes: \(remoteTrips.map { $0.code })")
 
-                    // If we updated any people, save the trip back to Firestore
-                    if needsMigration {
-                        print("💾 [Migration] Saving migrated trip \(remoteTrip.code) to Firestore...")
-                        do {
-                            let updatedTrip = try await firebase.saveTrip(remoteTrip)
-                            remoteTrip = updatedTrip
-                            print("✅ [Migration] Successfully migrated trip \(remoteTrip.code)")
-                        } catch {
-                            print("⚠️ [Migration] Failed to save migrated trip: \(error)")
-                            // Continue with the un-migrated trip
-                        }
-                    }
+            var updatedTrips: [Trip] = []
+            updatedTrips.reserveCapacity(remoteTrips.count)
+            var seenTripIDs = Set<UUID>()
 
-                    if let localIndex = mergedTrips.firstIndex(where: { $0.id == remoteTrip.id }) {
-                        // Compare modification dates and keep the newer one
-                        if remoteTrip.lastModified > mergedTrips[localIndex].lastModified {
-                            print("📥 [TripSync] Updating local trip \(remoteTrip.code) with remote version")
-                            mergedTrips[localIndex] = remoteTrip
-                        } else {
-                            print("📥 [TripSync] Keeping local trip \(remoteTrip.code) (newer)")
+            for var remoteTrip in remoteTrips {
+                // Migration: Update people with Firebase UIDs if they match current user
+                var needsMigration = false
+                if let currentProfile = profileManager.currentProfile {
+                    for (index, person) in remoteTrip.people.enumerated() {
+                        if person.id == currentProfile.id && person.firebaseUID == nil {
+                            print("🔄 [Migration] Adding Firebase UID to person \(person.name) in trip \(remoteTrip.code)")
+                            remoteTrip.people[index].firebaseUID = currentProfile.firebaseUID
+                            needsMigration = true
                         }
-                    } else {
-                        // Trip doesn't exist locally, add it
-                        print("📥 [TripSync] Adding new trip from remote: \(remoteTrip.code)")
-                        mergedTrips.append(remoteTrip)
                     }
                 }
 
-                trips = mergedTrips
-                print("✅ [TripSync] Trip sync complete. Total trips: \(trips.count)")
-            } else {
-                print("ℹ️ [TripSync] No remote trips found")
+                if needsMigration {
+                    print("💾 [Migration] Saving migrated trip \(remoteTrip.code) to Firestore...")
+                    do {
+                        let updatedTrip = try await firebase.saveTrip(remoteTrip)
+                        remoteTrip = updatedTrip
+                        print("✅ [Migration] Successfully migrated trip \(remoteTrip.code)")
+                    } catch {
+                        print("⚠️ [Migration] Failed to save migrated trip: \(error)")
+                    }
+                }
+
+                if let localTrip = trips.first(where: { $0.id == remoteTrip.id }),
+                   localTrip.lastModified > remoteTrip.lastModified {
+                    print("📥 [TripSync] Keeping newer local version of trip \(remoteTrip.code)")
+                    remoteTrip = localTrip
+                }
+
+                updatedTrips.append(remoteTrip)
+                seenTripIDs.insert(remoteTrip.id)
             }
+
+            let removedTripCodes = trips
+                .filter { !seenTripIDs.contains($0.id) }
+                .map(\.code)
+
+            if !removedTripCodes.isEmpty {
+                print("🧹 [TripSync] Removing locally cached trips no longer present remotely: \(removedTripCodes)")
+            }
+
+            trips = updatedTrips
+            print("✅ [TripSync] Trip sync complete. Total trips: \(trips.count)")
         } catch {
             print("❌ [TripSync] Failed to sync trips: \(error)")
         }

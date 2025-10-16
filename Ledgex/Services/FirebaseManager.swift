@@ -307,18 +307,29 @@ class FirebaseManager: ObservableObject, TripDataStore {
             print("📤 Attempting to save trip document to Firebase...")
             print("   Document ID: \(trip.id.uuidString)")
             print("   Group data keys: \(tripData.keys.sorted())")
-            
+
+            let currentUserUID = auth.currentUser?.uid
+            let peopleIDs = tripData["peopleIDs"] as? [String] ?? []
+            let shouldAttemptVerification = currentUserUID.flatMap { peopleIDs.contains($0) } ?? false
+
             try await docRef.setData(tripData)
             print("✅ Successfully saved trip document to Firebase!")
-            
-            // Verify the document was actually saved
-            let verifyDoc = try await docRef.getDocument()
-            if verifyDoc.exists {
-                print("✅ Document verified in Firebase")
+
+            if shouldAttemptVerification {
+                do {
+                    let verifyDoc = try await docRef.getDocument()
+                    if verifyDoc.exists {
+                        print("✅ Document verified in Firebase")
+                    } else {
+                        print("⚠️ Document save succeeded but verification failed")
+                    }
+                } catch {
+                    print("⚠️ Skipping verification for trip \(trip.code): \(error.localizedDescription)")
+                }
             } else {
-                print("⚠️ Document save succeeded but verification failed")
+                print("ℹ️ Skipping verification because current user is no longer a trip member")
             }
-            
+
             documentRefs[trip.id.uuidString] = docRef
             syncStatus = .success
             
@@ -471,6 +482,11 @@ class FirebaseManager: ObservableObject, TripDataStore {
         let code: String?
     }
 
+    private struct ForceDeleteErrorPayload: Decodable {
+        let error: String?
+        let message: String?
+    }
+
     @MainActor
     func joinTrip(code: String) async throws -> Trip {
         guard isFirebaseAvailable else {
@@ -526,6 +542,40 @@ class FirebaseManager: ObservableObject, TripDataStore {
     }
 
     @MainActor
+    func forceDeleteCurrentUserAccount() async throws {
+        guard isFirebaseAvailable else {
+            throw FirebaseManagerError.notAvailable
+        }
+        guard let currentUser = auth.currentUser else {
+            throw FirebaseManagerError.notAuthenticated
+        }
+
+        let token = try await currentUser.getIDToken()
+        var request = URLRequest(url: functionsBaseURL.appendingPathComponent("forceDeleteAccount"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.httpBody = Data()
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw FirebaseManagerError.invalidResponse
+        }
+
+        guard (200...299).contains(httpResponse.statusCode) else {
+            if let apiError = try? JSONDecoder().decode(ForceDeleteErrorPayload.self, from: data),
+               let message = apiError.message ?? apiError.error {
+                throw FirebaseManagerError.api(message: message)
+            } else {
+                throw FirebaseManagerError.api(message: "We couldn't remove your account right now. Please try again.")
+            }
+        }
+
+        print("✅ [Account] Force deleted user via Cloud Function")
+    }
+
+    @MainActor
     func leaveTrip(_ trip: Trip, profile: UserProfile) async throws {
         guard isFirebaseAvailable else {
             throw FirebaseManagerError.notAvailable
@@ -575,56 +625,107 @@ class FirebaseManager: ObservableObject, TripDataStore {
     func removeUserData(for profile: UserProfile) async throws {
         let userId = profile.id
         let userIdString = userId.uuidString
+        let firebaseUID = profile.firebaseUID
+        let documentID = firebaseUID ?? userIdString
 
-        let documentID = profile.firebaseUID ?? userIdString
+        var processedTripIDs: Set<UUID> = []
+
+        func stripUser(from trip: inout Trip) -> [UUID] {
+            let removedPeople = trip.people.filter { person in
+                person.id == userId || (firebaseUID != nil && person.firebaseUID == firebaseUID)
+            }
+
+            guard !removedPeople.isEmpty else { return [] }
+
+            let removedIDs = removedPeople.map(\.id)
+            trip.people.removeAll { removedIDs.contains($0.id) }
+
+            for index in trip.expenses.indices {
+                trip.expenses[index].participants.removeAll { removedIDs.contains($0.id) }
+                for removedId in removedIDs {
+                    trip.expenses[index].customSplits.removeValue(forKey: removedId)
+                }
+            }
+
+            trip.settlementReceipts.removeAll { receipt in
+                removedIDs.contains(receipt.fromPersonId) || removedIDs.contains(receipt.toPersonId)
+            }
+
+            trip.lastModified = Date()
+            return removedIDs
+        }
+
+        var identifiers: [String] = []
+        if let firebaseUID = firebaseUID {
+            identifiers.append(firebaseUID)
+        }
+        if !identifiers.contains(userIdString) {
+            identifiers.append(userIdString)
+        }
+
+        for identifier in identifiers {
+            do {
+                let snapshot = try await db.collection("trips").whereField("peopleIDs", arrayContains: identifier).getDocuments()
+                for document in snapshot.documents {
+                    var trip = try tripFromDocument(document)
+                    let (inserted, _) = processedTripIDs.insert(trip.id)
+                    guard inserted else { continue }
+
+                    let removedIDs = stripUser(from: &trip)
+                    guard !removedIDs.isEmpty else { continue }
+
+                    if trip.people.isEmpty {
+                        print("🧹 Removing final member from trip \(trip.code); deleting trip document")
+                        try await deleteTrip(trip)
+                    } else {
+                        _ = try await saveTrip(trip)
+                        print("🧹 Removed user \(userIdString) from trip \(trip.code)")
+                    }
+                }
+            } catch {
+                print("⚠️ Failed to remove user from trips using identifier \(identifier): \(error)")
+            }
+        }
+
+        var localTrips = DataManager.shared.loadTrips()
+        var didModifyLocalTrips = false
+
+        for index in localTrips.indices {
+            guard !processedTripIDs.contains(localTrips[index].id) else { continue }
+            var trip = localTrips[index]
+
+            guard trip.people.contains(where: {
+                $0.id == userId || (firebaseUID != nil && $0.firebaseUID == firebaseUID)
+            }) else { continue }
+
+            let removedIDs = stripUser(from: &trip)
+            guard !removedIDs.isEmpty else { continue }
+
+            localTrips[index] = trip
+            didModifyLocalTrips = true
+
+            do {
+                if trip.people.isEmpty {
+                    print("🧹 (Local fallback) Trip \(trip.code) now empty; deleting from Firestore")
+                    try await deleteTrip(trip)
+                } else {
+                    _ = try await saveTrip(trip)
+                    print("🧹 (Local fallback) Removed user \(userIdString) from trip \(trip.code)")
+                }
+            } catch {
+                print("⚠️ (Local fallback) Failed to sync trip \(trip.code) after removal: \(error)")
+            }
+        }
+
+        if didModifyLocalTrips {
+            DataManager.shared.saveTrips(localTrips)
+        }
 
         do {
             try await db.collection("users").document(documentID).delete()
             print("🗑️ Deleted user document for \(documentID)")
         } catch {
             print("⚠️ Failed to delete user document: \(error)")
-        }
-
-        var processedTripIDs: Set<UUID> = []
-
-        do {
-            let snapshot = try await db.collection("trips").whereField("peopleIDs", arrayContains: userIdString).getDocuments()
-            for document in snapshot.documents {
-                var trip = try tripFromDocument(document)
-                let originalCount = trip.people.count
-                trip.people.removeAll { $0.id == userId }
-                guard trip.people.count != originalCount else { continue }
-
-                for index in trip.expenses.indices {
-                    trip.expenses[index].participants.removeAll { $0.id == userId }
-                    trip.expenses[index].customSplits.removeValue(forKey: userId)
-                }
-
-                trip.settlementReceipts.removeAll { $0.fromPersonId == userId || $0.toPersonId == userId }
-                _ = try await saveTrip(trip)
-                print("🧹 Removed user \(userIdString) from trip \(trip.code)")
-                processedTripIDs.insert(trip.id)
-            }
-        } catch {
-            print("⚠️ Failed to remove user from trips: \(error)")
-        }
-
-        let localTrips = DataManager.shared.loadTrips().filter { trip in
-            trip.people.contains(where: { $0.id == userId }) && !processedTripIDs.contains(trip.id)
-        }
-        for var trip in localTrips {
-            let originalCount = trip.people.count
-            trip.people.removeAll { $0.id == userId }
-            guard trip.people.count != originalCount else { continue }
-
-            for index in trip.expenses.indices {
-                trip.expenses[index].participants.removeAll { $0.id == userId }
-                trip.expenses[index].customSplits.removeValue(forKey: userId)
-            }
-
-            trip.settlementReceipts.removeAll { $0.fromPersonId == userId || $0.toPersonId == userId }
-            _ = try await saveTrip(trip)
-            print("🧹 (Local fallback) Removed user \(userIdString) from trip \(trip.code)")
         }
     }
     

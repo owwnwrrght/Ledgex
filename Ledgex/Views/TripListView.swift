@@ -46,6 +46,8 @@ struct TripListView: View {
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .listRowBackground(Color.clear)
         .navigationTitle("Groups")
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
@@ -95,17 +97,11 @@ struct TripListView: View {
                                 .fontWeight(.medium)
                                 .foregroundColor(.primary)
                             
-                            Text("Create a group to track day-to-day costs with roommates, friends, or family")
-                                .font(.subheadline)
+                            Text("Create a group to stay in sync with everyone—split costs, track balances, and settle up effortlessly.")
+                                .font(.callout)
                                 .foregroundColor(.secondary)
                                 .multilineTextAlignment(.center)
-                                .padding(.horizontal, 32)
-
-                            Text("We'll start you with sensible defaults—you can customize the name, icon, and currency later in Group Settings.")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .multilineTextAlignment(.center)
-                                .padding(.horizontal, 40)
+                                .padding(.horizontal, 28)
                         }
                     }
                     
@@ -119,8 +115,9 @@ struct TripListView: View {
                             .foregroundColor(.white)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 16)
-                            .background(Color.blue)
-                            .cornerRadius(12)
+                            .background(LinearGradient.ledgexCallToAction)
+                            .cornerRadius(14)
+                            .shadow(color: Color.purple.opacity(0.12), radius: 8, x: 0, y: 6)
                         }
                         .padding(.horizontal, 32)
                         
@@ -134,8 +131,9 @@ struct TripListView: View {
                                 .foregroundColor(.blue)
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(Color.blue.opacity(0.1))
-                                .cornerRadius(8)
+                                .background(Color.blue.opacity(0.08))
+                                .cornerRadius(10)
+                                .ledgexOutlined(cornerRadius: 10)
                             }
                             .padding(.horizontal, 32)
                         }
@@ -361,7 +359,6 @@ struct TripRowView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack(alignment: .top, spacing: 12) {
-                // Trip icon
                 ZStack {
                     RoundedRectangle(cornerRadius: 12)
                         .fill(Color.blue.opacity(0.08))
@@ -370,43 +367,20 @@ struct TripRowView: View {
                 }
                 .frame(width: 48, height: 48)
                 
-                // Trip info
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     Text(trip.name)
                         .font(.headline)
                         .foregroundColor(.primary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     
-                    // Stats row
                     HStack(spacing: 16) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "person.2")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("\(trip.people.count)")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
-                        
-                        HStack(spacing: 4) {
-                            Image(systemName: "dollarsign.circle")
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                            Text("\(trip.expenses.count)")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
+                        statLabel(systemImage: "person.2", value: "\(trip.people.count)")
+                        statLabel(systemImage: "dollarsign.circle", value: "\(trip.expenses.count)")
                         
                         if totalAmount > 0 {
-                            HStack(spacing: 4) {
-                                Image(systemName: "chart.line.uptrend.xyaxis")
-                                    .font(.caption)
-                                    .foregroundColor(.secondary)
-                                Text(CurrencyAmount(amount: totalAmount, currency: trip.baseCurrency).formatted())
-                                    .font(.subheadline)
-                                    .fontWeight(.medium)
-                            }
+                            statLabel(systemImage: "chart.line.uptrend.xyaxis",
+                                      value: CurrencyAmount(amount: totalAmount, currency: trip.baseCurrency).formatted())
                         }
                         
                         Spacer()
@@ -446,6 +420,17 @@ struct TripRowView: View {
             Image(systemName: "exclamationmark.triangle")
                 .font(.caption)
                 .foregroundColor(.orange)
+        }
+    }
+
+    private func statLabel(systemImage: String, value: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: systemImage)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(value)
+                .font(.subheadline)
+                .fontWeight(.medium)
         }
     }
 
