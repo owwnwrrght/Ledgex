@@ -202,6 +202,8 @@ class TripListViewModel: ObservableObject {
 
             if let index = self.trips.firstIndex(where: { $0.id == joinedTrip.id }) {
                 self.trips[index] = joinedTrip
+            } else if let index = self.trips.firstIndex(where: { $0.code.caseInsensitiveCompare(joinedTrip.code) == .orderedSame }) {
+                self.trips[index] = joinedTrip
             } else {
                 self.trips.append(joinedTrip)
             }

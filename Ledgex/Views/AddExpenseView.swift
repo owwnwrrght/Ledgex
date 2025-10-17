@@ -1,38 +1,9 @@
 import SwiftUI
 import UIKit
 
-enum ExpenseEntryMode: String, Identifiable {
-    case manual
-    case quick
 
-    var id: String { rawValue }
-
-    var navigationTitle: String {
-        switch self {
-        case .manual: return "Add Manually"
-        case .quick: return "Quick Add"
-        }
-    }
-
-    var headline: String {
-        switch self {
-        case .manual: return "Manual expense entry"
-        case .quick: return "Fast expense entry"
-        }
-    }
-
-    var message: String {
-        switch self {
-        case .manual:
-            return "Customize the split, currencies, and attach receipts."
-        case .quick:
-            return "Perfect for simple splits. We’ll split equally unless you change it."
-        }
-    }
-}
 
 struct AddExpenseView: View {
-    let mode: ExpenseEntryMode
     @ObservedObject var viewModel: ExpenseViewModel
     @Environment(\.dismiss) var dismiss
     
@@ -46,6 +17,7 @@ struct AddExpenseView: View {
     @State private var isConverting = false
     @State private var currentExchangeRate: Decimal = Decimal(1)
     @State private var isLoadingRate = false
+    @State private var showingAdvancedOptions = false
 
     // Receipt photo support
     @State private var receiptImages: [UIImage] = []
@@ -58,12 +30,11 @@ struct AddExpenseView: View {
     
     @FocusState private var focusedField: Field?
     
-    private let quickAmountSuggestions: [Decimal] = [5, 10, 20, 50, 100]
+
     
     private enum Field { case description, amount }
     
-    init(viewModel: ExpenseViewModel, mode: ExpenseEntryMode = .manual) {
-        self.mode = mode
+    init(viewModel: ExpenseViewModel) {
         self._viewModel = ObservedObject(initialValue: viewModel)
     }
 
@@ -76,7 +47,7 @@ struct AddExpenseView: View {
             return false
         }
 
-        if mode == .manual && description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return false
         }
 
@@ -108,34 +79,19 @@ struct AddExpenseView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(mode.headline)
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                        Text(mode.message)
-                            .font(.footnote)
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.vertical, 4)
-                }
-
-                if mode == .manual, let template = lastExpenseTemplate {
+                if let template = lastExpenseTemplate {
                     templateSection(for: template)
                 }
                 
                 expenseDetailsSection
-                quickAmountSection
-                splitTypeSection
-                participantsSection
                 
-                if splitType == .custom && !amount.isEmpty {
-                    remainingAmountSection
+                if showingAdvancedOptions {
+                    advancedOptionsSection
+                } else {
+                    editDetailsButton
                 }
-                
-                receiptSection
             }
-            .navigationTitle(mode.navigationTitle)
+            .navigationTitle("Add Expense")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -223,13 +179,41 @@ struct AddExpenseView: View {
                     .font(.body)
                     .focused($focusedField, equals: .amount)
 
-                Button(action: { showingCurrencyPicker = true }) {
+                if showingAdvancedOptions {
+                    Button(action: { showingCurrencyPicker = true }) {
+                        Text(selectedCurrency.rawValue)
+                            .font(.subheadline.weight(.medium))
+                            .foregroundColor(.blue)
+                    }
+                } else {
                     Text(selectedCurrency.rawValue)
                         .font(.subheadline.weight(.medium))
-                        .foregroundColor(.blue)
+                        .foregroundColor(.secondary)
                 }
             }
+        } header: {
+            Text("Expense Details")
+        }
+    }
 
+    @ViewBuilder
+    private var advancedOptionsSection: some View {
+        Group {
+            currencySection
+            splitTypeSection
+            participantsSection
+            
+            if splitType == .custom && !amount.isEmpty {
+                remainingAmountSection
+            }
+            
+            receiptSection
+        }
+    }
+
+    @ViewBuilder
+    private var currencySection: some View {
+        Section {
             // Currency conversion preview (inline, subtle)
             if selectedCurrency != viewModel.trip.baseCurrency, let amountValue = decimal(from: amount), amountValue > 0 {
                 HStack {
@@ -275,31 +259,42 @@ struct AddExpenseView: View {
                         .foregroundColor(.orange)
                 }
             }
+        }
+    }
 
-        } header: {
-            Text("Expense Details")
+    @ViewBuilder
+    private var editDetailsButton: some View {
+        Section {
+            Button(action: {
+                withAnimation {
+                    showingAdvancedOptions = true
+                }
+            }) {
+                HStack {
+                    Text("Paid by \(payerDisplayName), split equally")
+                        .font(.subheadline)
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Text("Edit Details")
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
         }
     }
 
     @ViewBuilder
     private var splitTypeSection: some View {
-        if mode == .manual {
-            Section("How to Split") {
-                Picker("Split method", selection: $splitType) {
-                    ForEach(SplitType.allCases, id: \.self) { type in
-                        Text(type.rawValue).tag(type)
-                    }
+        Section("How to Split") {
+            Picker("Split method", selection: $splitType) {
+                ForEach(SplitType.allCases, id: \.self) { type in
+                    Text(type.rawValue).tag(type)
                 }
-                .pickerStyle(.segmented)
             }
-        } else {
-            Section("Split Method") {
-                Label("Split equally", systemImage: "person.3")
-                    .foregroundColor(.secondary)
-                Text("Switch to manual entry to customize splits.")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+            .pickerStyle(.segmented)
         }
     }
 
@@ -400,39 +395,37 @@ struct AddExpenseView: View {
     
     @ViewBuilder
     private var receiptSection: some View {
-        if mode == .manual {
-            Section {
-                Button(action: { showingReceiptScanner = true }) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "doc.text.viewfinder")
-                            .font(.title2)
-                            .foregroundColor(.blue)
-                            .frame(width: 24, height: 24)
-                    
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Scan Receipt")
-                            .font(.body)
-                            .foregroundColor(.primary)
-                        Text("Auto-split by items")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "chevron.right")
+        Section {
+            Button(action: { showingReceiptScanner = true }) {
+                HStack(spacing: 12) {
+                    Image(systemName: "doc.text.viewfinder")
+                        .font(.title2)
+                        .foregroundColor(.blue)
+                        .frame(width: 24, height: 24)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Scan Receipt")
+                        .font(.body)
+                        .foregroundColor(.primary)
+                    Text("Auto-split by items")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
-                    .padding(.vertical, 4)
-                }
-                .buttonStyle(.plain)
-
-                ReceiptAttachmentView(receiptImages: $receiptImages)
-            } header: {
-                Text("Receipt")
-            } footer: {
-                Text("Scan receipts to automatically split by individual items.")
+                Spacer()
+                Image(systemName: "chevron.right")
                     .font(.caption)
+                    .foregroundColor(.secondary)
             }
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.plain)
+
+            ReceiptAttachmentView(receiptImages: $receiptImages)
+        } header: {
+            Text("Receipt")
+        } footer: {
+            Text("Scan receipts to automatically split by individual items.")
+                .font(.caption)
         }
     }
 
@@ -456,7 +449,7 @@ struct AddExpenseView: View {
             }
             
             print("💰 Creating new expense: \(description)")
-            let expenseDescription = description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? defaultQuickDescription : description
+            let expenseDescription = description.trimmingCharacters(in: .whitespacesAndNewlines)
             var expense = Expense(
                 description: expenseDescription,
                 originalAmount: amountValue,
@@ -467,10 +460,9 @@ struct AddExpenseView: View {
                 participants: viewModel.people.filter { selectedParticipants.contains($0.id) }
             )
             
-            let resolvedSplitType: SplitType = mode == .quick ? .equal : splitType
-            expense.splitType = resolvedSplitType
+            expense.splitType = splitType
             
-            if resolvedSplitType == .custom {
+            if splitType == .custom {
                 let splits = customAmounts.compactMap { key, value -> (UUID, Decimal)? in
                     guard selectedParticipants.contains(key), let decimalValue = decimal(from: value) else { return nil }
                     return (key, decimalValue)
@@ -524,7 +516,7 @@ struct AddExpenseView: View {
         lastExpenseTemplate = viewModel.expenses.last
         applyInitialDefaultsIfNeeded()
         updateExchangeRate()
-        focusedField = mode == .quick ? .amount : .description
+        focusedField = .description
     }
 
     private func applyInitialDefaultsIfNeeded() {
@@ -535,9 +527,7 @@ struct AddExpenseView: View {
             selectedParticipants = Set(viewModel.people.map(\.id))
         }
 
-        if mode == .quick {
-            splitType = .equal
-        }
+        splitType = .equal
 
         if splitType == .custom {
             for id in selectedParticipants where customAmounts[id] == nil {
@@ -635,35 +625,5 @@ struct AddExpenseView: View {
         currentUserPerson?.name ?? "Your profile"
     }
 
-    private var defaultQuickDescription: String {
-        "New expense"
-    }
 
-    @ViewBuilder
-    private var quickAmountSection: some View {
-        if mode == .quick {
-            Section("Quick Amounts") {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 12) {
-                        ForEach(quickAmountSuggestions, id: \.self) { suggestion in
-                            Button(action: { applyQuickAmount(suggestion) }) {
-                                Text(CurrencyAmount(amount: suggestion, currency: selectedCurrency).formatted())
-                                    .font(.caption)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(Color.blue.opacity(0.12))
-                                    .foregroundColor(.blue)
-                                    .clipShape(Capsule())
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
-    }
-
-    private func applyQuickAmount(_ value: Decimal) {
-        amount = formatForInput(value)
-    }
 }

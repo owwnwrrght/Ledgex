@@ -96,11 +96,8 @@ class ExpenseViewModel: ObservableObject {
             let savedTrip = try await dataStore.saveTrip(trip)
             self.trip = savedTrip
             tripListViewModel?.updateTrip(savedTrip)
-            if allParticipantsConfirmed {
-                NotificationService.shared.sendTripNotification(.readyToSettle(tripName: trip.name))
-            }
         } catch {
-            await handleError(error, fallback: "We couldn't update the completion status. Please try again.")
+            await handleError(error, fallback: "We couldn\'t update the completion status. Please try again.")
         }
     }
     

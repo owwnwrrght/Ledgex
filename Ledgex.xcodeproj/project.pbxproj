@@ -17,9 +17,22 @@
 		79D9714831DFCD78172D37CF /* Pods-Ledgex.debug.xcconfig */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = text.xcconfig; name = "Pods-Ledgex.debug.xcconfig"; path = "Target Support Files/Pods-Ledgex/Pods-Ledgex.debug.xcconfig"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		4E432DE12E9738CB0063C1C8 /* Exceptions for "Ledgex" folder in "Ledgex" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				AppInfo.plist,
+			);
+			target = 4E432DCF2E9738CA0063C1C7 /* Ledgex */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		4E432DD22E9738CA0063C1C7 /* Ledgex */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				4E432DE12E9738CB0063C1C8 /* Exceptions for "Ledgex" folder in "Ledgex" target */,
+			);
 			path = Ledgex;
 			sourceTree = "<group>";
 		};
@@ -150,13 +163,9 @@
 			inputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Ledgex/Pods-Ledgex-frameworks-${CONFIGURATION}-input-files.xcfilelist",
 			);
-			inputPaths = (
-			);
 			name = "[CP] Embed Pods Frameworks";
 			outputFileListPaths = (
 				"${PODS_ROOT}/Target Support Files/Pods-Ledgex/Pods-Ledgex-frameworks-${CONFIGURATION}-output-files.xcfilelist",
-			);
-			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;

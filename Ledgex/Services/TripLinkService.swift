@@ -5,16 +5,24 @@ actor TripLinkService {
     
     private var cachedLinks: [UUID: URL] = [:]
     private let session: URLSession
-    private static let fallbackDomain = URL(string: "https://splyt-4801c.web.app/join")!
     private let functionURL: URL?
+    private static let fallbackDomain = URL(string: "https://splyt-4801c.web.app/join")!
+    private static let configuredFunctionURL: URL? = {
+        guard
+            let url = Bundle.main.url(forResource: "Secrets", withExtension: "plist"),
+            let data = try? Data(contentsOf: url),
+            let plist = try? PropertyListSerialization.propertyList(from: data, options: [], format: nil) as? [String: Any],
+            let urlString = plist["TRIP_INVITE_FUNCTION_URL"] as? String,
+            !urlString.isEmpty
+        else {
+            return nil
+        }
+        return URL(string: urlString)
+    }()
     
     init(session: URLSession = .shared, functionURL: URL? = nil) {
         self.session = session
-        if let functionURL {
-            self.functionURL = functionURL
-        } else {
-            self.functionURL = APIKeyManager.shared.tripInviteFunctionURL
-        }
+        self.functionURL = functionURL ?? Self.configuredFunctionURL
     }
     
     func link(for trip: Trip) async -> URL {

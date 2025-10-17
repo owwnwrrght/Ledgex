@@ -1,6 +1,6 @@
 import Foundation
 
-struct AppError: Identifiable {
+struct AppError: Identifiable, Error, LocalizedError {
     let id = UUID()
     let title: String
     let message: String
@@ -12,7 +12,13 @@ struct AppError: Identifiable {
         self.underlyingError = underlyingError
     }
 
+    var errorDescription: String? { message }
+
     static func make(from error: Error, fallbackTitle: String = "Something went wrong", fallbackMessage: String = "Please try again.") -> AppError {
+        if let appError = error as? AppError {
+            return appError
+        }
+
         if let appErrorConvertible = error as? AppErrorConvertible {
             return appErrorConvertible.appError
         }

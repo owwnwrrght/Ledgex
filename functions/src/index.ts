@@ -43,7 +43,7 @@ interface TripDoc {
   phase?: "setup" | "active" | "completed";
 }
 
-type TokenRecord = { token: string; userId: string };
+type TokenRecord = { token: string; docId: string; personId?: string };
 
 const db = admin.firestore();
 const FieldValue = admin.firestore.FieldValue;
@@ -294,39 +294,83 @@ export const forceDeleteAccount = onRequest({
   }
 });
 
-export const onTripUpdated = onDocumentUpdated("trips/{tripId}", async (event) => {
-  const beforeData = event.data?.before.data() as TripDoc | undefined;
-  const afterData = event.data?.after.data() as TripDoc | undefined;
-  if (!afterData) {
-    return;
+
+
+import * as functions from "firebase-functions";
+import axios from "axios";
+
+// Define the structure for the Vision API response for clarity
+interface VisionApiResponse {
+  responses: Array<{
+    textAnnotations?: Array<{
+      description: string;
+    }>;
+  }>;
+}
+
+export const processReceiptImage = functions.https.onCall(async (data, context) => {
+  // 1. Ensure the user is authenticated to prevent abuse
+  if (!context.auth) {
+    throw new functions.https.HttpsError(
+      "unauthenticated",
+      "You must be signed in to scan receipts."
+    );
   }
 
-  const tripId = event.params.tripId as string;
-  const tasks: Array<Promise<void>> = [];
-
-  // Check if trip phase changed from setup to active
-  const phaseChanged = beforeData?.phase === "setup" && afterData.phase === "active";
-  if (phaseChanged) {
-    tasks.push(handleTripStarted(afterData, tripId));
+  const image = data.image;
+  if (!image) {
+    throw new functions.https.HttpsError(
+      "invalid-argument",
+      "The function must be called with an 'image' argument."
+    );
   }
 
-  const newExpenses = detectNewExpenses(beforeData?.expenses, afterData.expenses);
-  if (newExpenses.length > 0) {
-    tasks.push(handleNewExpenses(newExpenses, afterData, tripId));
-  }
+  // 2. Access the securely stored API key
+  const apiKey = process.env.VISION_API_KEY;
+  const visionApiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
 
-  const newPeople = detectNewPeople(beforeData?.people, afterData.people);
-  if (newPeople.length > 0) {
-    tasks.push(handleNewMembers(newPeople, afterData, tripId));
-  }
+  try {
+    // 3. Call the Google Vision API from the backend
+    const requestBody = {
+      requests: [
+        {
+          image: {
+            content: image, // The Base64 encoded image string
+          },
+          features: [
+            {
+              type: "DOCUMENT_TEXT_DETECTION",
+            },
+          ],
+        },
+      ],
+    };
 
-  const wasReady = isTripReadyToSettle(beforeData?.people);
-  const isReady = isTripReadyToSettle(afterData.people);
-  if (!wasReady && isReady) {
-    tasks.push(handleReadyToSettle(afterData, tripId));
-  }
+    const visionResponse = await axios.post<VisionApiResponse>(visionApiUrl, requestBody);
 
-  await Promise.all(tasks);
+    // 4. A very basic parser for the response.
+    //    This should be expanded to match the logic in your app's OCRResult model.
+    const firstResponse = visionResponse.data.responses?.[0];
+    const fullText = firstResponse?.textAnnotations?.[0]?.description ?? "";
+
+    // TODO: Implement more robust parsing here to extract items, prices, totals, etc.
+    // For now, we'll just return the raw text.
+    
+    return {
+      rawText: fullText,
+      // You would eventually return a fully parsed object like this:
+      // merchantName: "Example Store",
+      // items: [{ name: "Item 1", price: 10.99 }],
+      // total: 10.99
+    };
+
+  } catch (error) {
+    console.error("Error calling Vision API:", error);
+    throw new functions.https.HttpsError(
+      "internal",
+      "An error occurred while processing the receipt."
+    );
+  }
 });
 
 function detectNewExpenses(before: ExpenseDoc[] | undefined, after: ExpenseDoc[] | undefined): ExpenseDoc[] {
@@ -358,7 +402,7 @@ async function handleNewExpenses(expenses: ExpenseDoc[], trip: TripDoc, tripId: 
     const recipients = participantIDs
       .filter((id): id is string => Boolean(id) && id !== creator);
 
-    const tokens = await fetchTokens(recipients);
+    const tokens = await fetchTokens(people, recipients);
     if (!tokens.length) {
       continue;
     }
@@ -391,7 +435,7 @@ async function handleNewMembers(members: PersonDoc[], trip: TripDoc, tripId: str
       .map((person) => person.id)
       .filter((id): id is string => Boolean(id) && id !== member.id);
 
-    const tokens = await fetchTokens(recipients);
+    const tokens = await fetchTokens(people, recipients);
     if (!tokens.length) {
       continue;
     }
@@ -417,7 +461,7 @@ async function handleTripStarted(trip: TripDoc, tripId: string): Promise<void> {
     .map((person) => person.id)
     .filter((id): id is string => Boolean(id));
 
-  const tokens = await fetchTokens(recipients);
+  const tokens = await fetchTokens(people, recipients);
   if (!tokens.length) {
     return;
   }
@@ -441,7 +485,7 @@ async function handleReadyToSettle(trip: TripDoc, tripId: string): Promise<void>
     .map((person) => person.id)
     .filter((id): id is string => Boolean(id));
 
-  const tokens = await fetchTokens(recipients);
+  const tokens = await fetchTokens(people, recipients);
   if (!tokens.length) {
     return;
   }
@@ -456,29 +500,69 @@ async function handleReadyToSettle(trip: TripDoc, tripId: string): Promise<void>
   });
 }
 
-async function fetchTokens(userIds: string[]): Promise<TokenRecord[]> {
-  if (!userIds.length) {
+async function fetchTokens(people: PersonDoc[], personIds: string[]): Promise<TokenRecord[]> {
+  const uniqueIds = Array.from(new Set(personIds.filter((id): id is string => Boolean(id))));
+  if (!uniqueIds.length) {
+    return [];
+  }
+
+  const personIndex = new Map(
+    people
+      .filter((person): person is PersonDoc & { id: string } => typeof person.id === "string" && person.id.length > 0)
+      .map((person) => [person.id, person]),
+  );
+
+  const docIds = new Set<string>();
+  uniqueIds.forEach((id) => {
+    docIds.add(id);
+    const person = personIndex.get(id);
+    if (person?.firebaseUID) {
+      docIds.add(person.firebaseUID);
+    }
+  });
+
+  if (!docIds.size) {
     return [];
   }
 
   const snapshots = await Promise.all(
-    userIds.map((id) => db.collection("users").doc(id).get()),
+    Array.from(docIds).map((docId) => db.collection("users").doc(docId).get()),
   );
 
   const tokens: TokenRecord[] = [];
-  snapshots.forEach((snapshot, index) => {
+  const targetIds = new Set(uniqueIds);
+
+  snapshots.forEach((snapshot) => {
     if (!snapshot.exists) {
       return;
     }
+
     const data = snapshot.data();
     const storedTokens: unknown = data?.tokens;
-    if (Array.isArray(storedTokens)) {
-      storedTokens.forEach((token) => {
-        if (typeof token === "string") {
-          tokens.push({ token, userId: userIds[index] });
-        }
-      });
+    if (!Array.isArray(storedTokens) || !storedTokens.length) {
+      return;
     }
+
+    const profileId = typeof data?.id === "string" ? data.id : undefined;
+    const firebaseUID = typeof data?.firebaseUID === "string" ? data.firebaseUID : undefined;
+    const matchesTarget =
+      (profileId && targetIds.has(profileId)) ||
+      (firebaseUID && targetIds.has(firebaseUID)) ||
+      targetIds.has(snapshot.id);
+
+    if (!matchesTarget) {
+      return;
+    }
+
+    storedTokens.forEach((token) => {
+      if (typeof token === "string" && token.trim().length) {
+        tokens.push({
+          token,
+          docId: snapshot.id,
+          personId: profileId ?? firebaseUID ?? snapshot.id,
+        });
+      }
+    });
   });
 
   const deduped = new Map(tokens.map((record) => [record.token, record]));
@@ -490,6 +574,8 @@ async function sendMulticast(tokens: TokenRecord[], notification: { title: strin
     return;
   }
 
+  logger.info(`Sending multicast notification to ${tokens.length} tokens`, { data });
+
   const response = await messaging.sendEachForMulticast({
     tokens: tokens.map((record) => record.token),
     notification,
@@ -497,9 +583,17 @@ async function sendMulticast(tokens: TokenRecord[], notification: { title: strin
   });
 
   const invalid: TokenRecord[] = [];
+  let successCount = 0;
+  let failureCount = 0;
+
   response.responses.forEach((resp, index) => {
-    if (!resp.success) {
+    if (resp.success) {
+      successCount++;
+      logger.info(`Successfully sent message to token: ${tokens[index].token}`, { messageId: resp.messageId });
+    } else {
+      failureCount++;
       const errorCode = resp.error?.code ?? "";
+      logger.warn(`Failed to send message to token: ${tokens[index].token}`, { error: resp.error });
       if (errorCode === "messaging/registration-token-not-registered" ||
           errorCode === "messaging/invalid-registration-token") {
         invalid.push(tokens[index]);
@@ -507,13 +601,21 @@ async function sendMulticast(tokens: TokenRecord[], notification: { title: strin
     }
   });
 
+  logger.info(`Multicast notification summary: ${successCount} success, ${failureCount} failure`);
+
   if (invalid.length) {
-    await Promise.all(invalid.map(({ token, userId }) =>
-      db.collection("users").doc(userId).update({
-        tokens: FieldValue.arrayRemove(token),
-      })
-    ));
+    logger.info(`Removing ${invalid.length} invalid tokens`);
+    await Promise.all(invalid.map(async ({ token, docId }) => {
+      try {
+        await db.collection("users").doc(docId).update({
+          tokens: FieldValue.arrayRemove(token),
+        });
+      } catch (error) {
+        logger.warn("Failed to remove invalid token", { docId, token, error });
+      }
+    }));
   }
+
 }
 
 function formatCurrency(amount: number, currency: string): string {
@@ -538,3 +640,42 @@ function isTripReadyToSettle(people: PersonDoc[] | undefined): boolean {
     .filter((person) => Boolean(person.id))
     .every((person) => Boolean(person.hasCompletedExpenses));
 }
+
+export const onTripUpdated = onDocumentUpdated("trips/{tripId}", async (event) => {
+  const beforeData = event.data?.before.data() as TripDoc | undefined;
+  const afterData = event.data?.after.data() as TripDoc | undefined;
+  const tripId = event.params.tripId;
+
+  if (!beforeData || !afterData) {
+    logger.info("Trip data is missing, skipping notifications.");
+    return;
+  }
+
+  // Detect new expenses
+  const newExpenses = detectNewExpenses(beforeData.expenses, afterData.expenses);
+  if (newExpenses.length > 0) {
+    logger.info(`Detected ${newExpenses.length} new expenses for trip ${tripId}`);
+    await handleNewExpenses(newExpenses, afterData, tripId);
+  }
+
+  // Detect new members
+  const newMembers = detectNewPeople(beforeData.people, afterData.people);
+  if (newMembers.length > 0) {
+    logger.info(`Detected ${newMembers.length} new members for trip ${tripId}`);
+    await handleNewMembers(newMembers, afterData, tripId);
+  }
+
+  // Detect trip start
+  if (beforeData.phase === "setup" && afterData.phase === "active") {
+    logger.info(`Trip ${tripId} has started`);
+    await handleTripStarted(afterData, tripId);
+  }
+
+  // Detect ready to settle
+  const beforeIsReady = isTripReadyToSettle(beforeData.people);
+  const afterIsReady = isTripReadyToSettle(afterData.people);
+  if (!beforeIsReady && afterIsReady) {
+    logger.info(`Trip ${tripId} is ready to settle`);
+    await handleReadyToSettle(afterData, tripId);
+  }
+});

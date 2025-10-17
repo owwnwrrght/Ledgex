@@ -807,8 +807,15 @@ class FirebaseManager: ObservableObject, TripDataStore {
         return try tripFromDocumentData(data, id: document.documentID)
     }
     
-    private func tripFromDocumentData(_ data: [String: Any], id: String) throws -> Trip {
-        let id = UUID(uuidString: data["id"] as? String ?? "") ?? UUID()
+    private func tripFromDocumentData(_ data: [String: Any], id documentId: String) throws -> Trip {
+        let legacyIdString = data["id"] as? String ?? ""
+        let tripId = UUID(uuidString: legacyIdString)
+            ?? UUID(uuidString: documentId)
+            ?? UUID()
+
+        if legacyIdString.isEmpty || legacyIdString != tripId.uuidString {
+            print("ℹ️ [TripParse] Normalizing trip ID for document \(documentId). Legacy field: \(legacyIdString.isEmpty ? "missing" : legacyIdString)")
+        }
         let name = data["name"] as? String ?? "Unknown Group"
         let code = data["code"] as? String ?? "UNKNOWN"
         let version = data["version"] as? Int ?? 1
@@ -922,7 +929,7 @@ class FirebaseManager: ObservableObject, TripDataStore {
             }
         }
 
-        let trip = Trip(id: id,
+        let trip = Trip(id: tripId,
                         name: name,
                         code: code,
                         people: people,

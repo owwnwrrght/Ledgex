@@ -6,8 +6,7 @@ struct TripDetailView: View {
     @StateObject private var viewModel: ExpenseViewModel
     @State private var selectedTab = 0
     @State private var showingShareSheet = false
-    @State private var showingAddExpenseOptions = false
-    @State private var expenseEntryMode: ExpenseEntryMode?
+    @State private var showingAddExpense = false
     @State private var showingReceiptScanner = false
     @State private var showingFlagPicker = false
     @State private var showingSettings = false
@@ -71,7 +70,7 @@ struct TripDetailView: View {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 if selectedTab == 1 { // Expenses tab
                     Button(action: {
-                        showingAddExpenseOptions = true
+                        showingAddExpense = true
                     }) {
                         Image(systemName: "plus")
                     }
@@ -94,8 +93,8 @@ struct TripDetailView: View {
         .sheet(isPresented: $showingShareSheet) {
             ShareTripView(trip: viewModel.trip)
         }
-        .sheet(item: $expenseEntryMode) { mode in
-            AddExpenseView(viewModel: viewModel, mode: mode)
+        .sheet(isPresented: $showingAddExpense) {
+            AddExpenseView(viewModel: viewModel)
         }
         .sheet(isPresented: $showingFlagPicker) {
             FlagPickerView(currentSelection: viewModel.trip.flagEmoji) { newFlag in
@@ -118,23 +117,7 @@ struct TripDetailView: View {
                 ocrResult: wrapper.value.1
             )
         }
-        .confirmationDialog("Add Expense", isPresented: $showingAddExpenseOptions, titleVisibility: .visible) {
-            Button("Add manually") {
-                showingAddExpenseOptions = false
-                expenseEntryMode = .manual
-            }
-            Button("Quick add") {
-                showingAddExpenseOptions = false
-                expenseEntryMode = .quick
-            }
-            Button("Add from receipt") {
-                showingAddExpenseOptions = false
-                showingReceiptScanner = true
-            }
-            Button("Cancel", role: .cancel) { }
-        } message: {
-            Text("Choose how you’d like to capture this expense.")
-        }
+
         .refreshable {
             await viewModel.refreshFromCloud()
         }

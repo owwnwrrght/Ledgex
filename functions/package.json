@@ -14,8 +14,8 @@
   },
   "dependencies": {
     "firebase-admin": "^11.10.1",
-    "firebase-functions": "^6.5.0",
-    "node-fetch": "^3.3.2"
+    "firebase-functions": "^4.0.0",
+    "axios": "^1.6.2"
   },
   "devDependencies": {
     "@types/node": "^20.14.10",

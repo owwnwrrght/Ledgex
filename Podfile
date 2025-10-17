@@ -10,5 +10,6 @@ target 'Ledgex' do
   pod 'Firebase/Auth'
   pod 'Firebase/Storage'
   pod 'Firebase/Messaging'
+  pod 'Firebase/Functions'
 
 end

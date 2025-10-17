@@ -1050,27 +1050,28 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
 
     private func messages(for authError: ASAuthorizationError, prefix: String = "") -> (userFacing: String?, debug: String) {
         let debugPrefix = prefix.isEmpty ? "" : "\(prefix) "
-        switch authError.code {
-        case .canceled:
+        let code = authError.code
+        
+        if code == .canceled {
             logError(stage: .systemPermissions, message: "\(debugPrefix)Sign in with Apple canceled by user (1001)")
             logError(stage: .systemPermissions, message: "\(debugPrefix)Verify device is signed into iCloud and allows Apple ID sign-in")
             return (nil, "\(debugPrefix)User canceled Sign in with Apple (1001)")
-        case .failed:
+        } else if code == .failed {
             return ("Sign in with Apple couldn’t finish. Please try again in a moment.", "\(debugPrefix)Authorization failed (1004) - System authentication error")
-        case .invalidResponse:
+        } else if code == .invalidResponse {
             return ("We couldn’t verify Apple’s response. Please try again.", "\(debugPrefix)Invalid response (1003) - Received invalid data from Apple")
-        case .notHandled:
+        } else if code == .notHandled {
             return ("Sign in with Apple wasn’t completed. Please try again.", "\(debugPrefix)Not handled (1002) - Authorization request not processed")
-        case .notInteractive:
+        } else if code == .notInteractive {
             logError(stage: .systemPermissions, message: "\(debugPrefix)Sign in with Apple UI could not be presented. Check foreground window scene.")
             return ("Sign in with Apple needs the app in the foreground. Please bring Ledgex forward and try again.", "\(debugPrefix)Not interactive - Cannot present authentication UI")
-        case .matchedExcludedCredential:
+        } else if #available(iOS 18.0, *), code == .matchedExcludedCredential {
             return ("Sign in with Apple isn’t available for this Apple ID. You can sign in with email instead.", "\(debugPrefix)Matched excluded credential")
-        case .unknown:
-            return ("Sign in with Apple hit an unexpected issue. Please try again.", "\(debugPrefix)Unknown error (1000) - Unspecified authentication failure")
-        @unknown default:
-            return ("Sign in with Apple hit an unexpected issue. Please try again.", "\(debugPrefix)Unhandled authorization error (code \(authError.code.rawValue))")
+        } else if code == .unknown {
+            return ("Sign in with Apple hit an unexpected issue. Please try again.", "\(debugPrefix)Unknown authorization error")
         }
+        
+        return ("Sign in with Apple hit an unexpected issue. Please try again.", "\(debugPrefix)Unhandled authorization error (code \(authError.code.rawValue))")
     }
 
     private func userFacingMessage(for nsError: NSError) -> String? {
@@ -1087,40 +1088,38 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
 
         if nsError.domain == ASAuthorizationError.errorDomain,
            let authCode = ASAuthorizationError.Code(rawValue: nsError.code) {
-            switch authCode {
-            case .canceled:
+            if authCode == .canceled {
                 return nil
-            case .failed:
+            } else if authCode == .failed {
                 return "Sign in with Apple couldn’t finish. Please try again in a moment."
-            case .invalidResponse:
+            } else if authCode == .invalidResponse {
                 return "We couldn’t verify Apple’s response. Please try again."
-            case .notHandled:
+            } else if authCode == .notHandled {
                 return "Sign in with Apple wasn’t completed. Please try again."
-            case .notInteractive:
+            } else if authCode == .notInteractive {
                 return "Sign in with Apple needs the app in the foreground. Please bring Ledgex forward and try again."
-            case .matchedExcludedCredential:
+            } else if #available(iOS 18.0, *), authCode == .matchedExcludedCredential {
                 return "Sign in with Apple isn’t available for this Apple ID. You can sign in with email instead."
-            case .unknown:
-                return "Sign in with Apple hit an unexpected issue. Please try again."
-            @unknown default:
+            } else if authCode == .unknown {
                 return "Sign in with Apple hit an unexpected issue. Please try again."
             }
+            
+            return "Sign in with Apple hit an unexpected issue. Please try again."
         }
 
         if nsError.domain == AuthErrorDomain,
            let authCode = AuthErrorCode(rawValue: nsError.code) {
-            switch authCode {
-            case .accountExistsWithDifferentCredential:
+            if authCode == .accountExistsWithDifferentCredential {
                 return "An account already exists with a different sign-in method. Try email instead."
-            case .networkError:
+            } else if authCode == .networkError {
                 return "We couldn’t reach the server. Check your connection and try again."
-            case .appNotAuthorized:
+            } else if authCode == .appNotAuthorized {
                 return "This build isn’t authorized for Sign in with Apple. Please use the App Store version."
-            case .webContextAlreadyPresented, .webContextCancelled:
+            } else if authCode == .webContextAlreadyPresented || authCode == .webContextCancelled {
                 return nil
-            default:
-                return "Sign in with Apple hit an unexpected issue. Please try again."
             }
+            
+            return "Sign in with Apple hit an unexpected issue. Please try again."
         }
 
         return nil
