@@ -41,46 +41,137 @@ class GoogleCloudVisionService {
 
         // 2. Call the Firebase Function
         do {
+            print("📸 Sending receipt image to server for processing...")
             let result = try await functions.httpsCallable("processReceiptImage").call(["image": base64Image])
-            
+
             // 3. Decode the result from the function
-            guard let data = result.data as? [String: Any], let rawText = data["rawText"] as? String else {
+            guard let data = result.data as? [String: Any] else {
+                print("❌ Invalid response from server: \(result.data)")
                 throw AppError(message: "Invalid response from server.")
             }
 
-            // 4. Parse the raw text into an OCRResult
-            // This parsing logic should be robust. For this example, we'll create a placeholder.
-            // You should replace this with the actual parsing logic you had or a new, improved one.
-            let parsedResult = parseOCRResponse(rawText: rawText)
-            
+            print("✅ Received response from server")
+
+            // 4. Parse the structured result returned by the server
+            let parsedResult = try parseServerResponse(data)
+
+            print("✅ Successfully parsed \(parsedResult.items.count) items from receipt")
+
             return parsedResult
-        } catch {
-            print("Error calling Firebase Function: \(error.localizedDescription)")
-            throw AppError.make(from: error, fallbackTitle: "Receipt Scan Failed", fallbackMessage: "Could not process the receipt image. Please try again.")
+        } catch let error as NSError {
+            print("❌ Error calling Firebase Function: \(error)")
+            print("   Error code: \(error.code)")
+            print("   Error domain: \(error.domain)")
+            print("   Error description: \(error.localizedDescription)")
+
+            // Check for specific Firebase Function error codes
+            if let errorCode = error.userInfo["code"] as? String {
+                print("   Firebase error code: \(errorCode)")
+
+                switch errorCode {
+                case "failed-precondition":
+                    throw AppError(
+                        title: "Configuration Error",
+                        message: "The receipt scanning service is not properly configured. Please contact support."
+                    )
+                case "resource-exhausted":
+                    throw AppError(
+                        title: "Too Many Requests",
+                        message: "The service is experiencing high traffic. Please try again in a moment."
+                    )
+                case "unavailable":
+                    throw AppError(
+                        title: "Service Unavailable",
+                        message: "Could not reach the receipt processing service. Please check your internet connection and try again."
+                    )
+                case "unauthenticated":
+                    throw AppError(
+                        title: "Authentication Error",
+                        message: "You must be signed in to scan receipts. Please sign in and try again."
+                    )
+                default:
+                    break
+                }
+            }
+
+            // Extract error message from Firebase error if available
+            if let errorMessage = error.userInfo["message"] as? String {
+                throw AppError(
+                    title: "Receipt Scan Failed",
+                    message: errorMessage
+                )
+            }
+
+            throw AppError.make(from: error, fallbackTitle: "Receipt Scan Failed", fallbackMessage: "Could not process the receipt image. Please ensure the receipt is clearly visible and try again with better lighting.")
         }
     }
 
-    // This is a placeholder for the complex parsing logic.
-    // You would need to implement this to match your app's requirements for extracting
-    // items, prices, merchant names, etc., from the raw text returned by the Vision API.
-    private func parseOCRResponse(rawText: String) -> OCRResult {
-        // TODO: Implement robust parsing of the raw text from the Vision API.
-        // For now, returning a dummy result.
-        print("--- OCR Raw Text ---")
-        print(rawText)
-        print("--------------------")
+    private func parseServerResponse(_ payload: [String: Any]) throws -> OCRResult {
+        let merchantName = payload["merchantName"] as? String
+        let tax = decimal(from: payload["tax"]) ?? 0
+        let tip = decimal(from: payload["tip"]) ?? 0
+        let total = decimal(from: payload["total"]) ?? decimal(from: payload["subtotal"])
         
-        let dummyItems = [ReceiptItem(name: "Scanned Item 1", quantity: 1, price: 12.99),
-                          ReceiptItem(name: "Scanned Item 2", quantity: 2, price: 5.50)]
+        let items: [ReceiptItem] = (payload["items"] as? [[String: Any]])?.compactMap { itemDict in
+            guard let name = (itemDict["name"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !name.isEmpty else { return nil }
+            
+            let quantity = quantity(from: itemDict["quantity"])
+            let price = decimal(from: itemDict["price"]) ?? 0
+            
+            return ReceiptItem(name: name, quantity: quantity, price: price)
+        } ?? []
+        
+        guard !items.isEmpty else {
+            throw AppError(message: "We couldn't find any items on that receipt. Please try again with a clearer photo.")
+        }
         
         return OCRResult(
-            items: dummyItems,
-            merchantName: "Scanned Merchant",
-            totalAmount: 24.00,
-            tax: 1.01,
-            tip: 0,
-            detectedLanguage: "en"
+            items: items,
+            merchantName: merchantName,
+            totalAmount: total,
+            tax: tax,
+            tip: tip,
+            detectedLanguage: nil
         )
+    }
+    
+    private func decimal(from value: Any?) -> Decimal? {
+        switch value {
+        case let number as NSNumber:
+            return number.decimalValue
+        case let string as String:
+            if let doubleValue = Double(string) {
+                return Decimal(doubleValue)
+            }
+            return nil
+        case let doubleValue as Double:
+            return Decimal(doubleValue)
+        case let intValue as Int:
+            return Decimal(intValue)
+        default:
+            return nil
+        }
+    }
+    
+    private func quantity(from value: Any?) -> Int {
+        if let number = value as? NSNumber {
+            return max(Int(number.doubleValue.rounded()), 1)
+        }
+        
+        if let string = value as? String, let doubleValue = Double(string) {
+            return max(Int(doubleValue.rounded()), 1)
+        }
+        
+        if let doubleValue = value as? Double {
+            return max(Int(doubleValue.rounded()), 1)
+        }
+        
+        if let intValue = value as? Int {
+            return max(intValue, 1)
+        }
+        
+        return 1
     }
 }
 // MARK: - Error Types

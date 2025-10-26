@@ -3,8 +3,8 @@ import { onRequest } from "firebase-functions/v2/https";
 import { onDocumentUpdated } from "firebase-functions/v2/firestore";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
-import fetch from "node-fetch";
 import { randomUUID } from "crypto";
+import * as functions from "firebase-functions";
 
 admin.initializeApp();
 
@@ -296,82 +296,279 @@ export const forceDeleteAccount = onRequest({
 
 
 
-import * as functions from "firebase-functions";
 import axios from "axios";
 
-// Define the structure for the Vision API response for clarity
-interface VisionApiResponse {
-  responses: Array<{
-    textAnnotations?: Array<{
-      description: string;
-    }>;
-  }>;
-}
+type ParsedReceiptItem = {
+  name?: string;
+  quantity?: number;
+  price?: number;
+  total?: number;
+};
 
-export const processReceiptImage = functions.https.onCall(async (data, context) => {
-  // 1. Ensure the user is authenticated to prevent abuse
-  if (!context.auth) {
-    throw new functions.https.HttpsError(
-      "unauthenticated",
-      "You must be signed in to scan receipts."
-    );
-  }
+type ParsedReceipt = {
+  merchantName?: string | null;
+  currencyCode?: string | null;
+  subtotal?: number | null;
+  tax?: number | null;
+  tip?: number | null;
+  total?: number | null;
+  items?: ParsedReceiptItem[];
+  rawText?: string | null;
+};
 
-  const image = data.image;
-  if (!image) {
-    throw new functions.https.HttpsError(
-      "invalid-argument",
-      "The function must be called with an 'image' argument."
-    );
-  }
+export const processReceiptImage = functions
+  .region("us-central1")
+  .runWith({ secrets: ["OPENAI_API_KEY"] })
+  .https.onCall(async (data, context) => {
+    if (!context.auth) {
+      throw new functions.https.HttpsError(
+        "unauthenticated",
+        "You must be signed in to scan receipts.",
+      );
+    }
 
-  // 2. Access the securely stored API key
-  const apiKey = process.env.VISION_API_KEY;
-  const visionApiUrl = `https://vision.googleapis.com/v1/images:annotate?key=${apiKey}`;
+    const base64Payload = typeof (data as { image?: unknown })?.image === "string"
+      ? ((data as { image?: unknown }).image as string).trim()
+      : undefined;
 
-  try {
-    // 3. Call the Google Vision API from the backend
-    const requestBody = {
-      requests: [
+    if (!base64Payload) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "The function must be called with an 'image' argument.",
+      );
+    }
+
+    const resolvedOpenAiKey = process.env.OPENAI_API_KEY;
+    if (!resolvedOpenAiKey) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "OpenAI API key not configured on the server.",
+      );
+    }
+
+    const normalizedImage = normalizeBase64Image(base64Payload);
+    const approxSizeBytes = Math.ceil((normalizedImage.length * 3) / 4);
+    if (approxSizeBytes > 8_000_000) {
+      throw new functions.https.HttpsError(
+        "invalid-argument",
+        "Receipt image is too large. Please choose a smaller photo.",
+      );
+    }
+
+    let parsedReceipt: ParsedReceipt = {};
+    try {
+      const systemPrompt = [
+        "You are an expert receipt parser that extracts structured data from receipt images.",
+        "Analyze the receipt image carefully and extract ALL individual items/purchases visible on the receipt.",
+        "Return a JSON object with the following structure:",
+        "- merchantName: string (name of the store/restaurant, if visible)",
+        "- currencyCode: string (3-letter ISO code like USD, EUR, GBP, etc. if detectable from currency symbols)",
+        "- subtotal: number (subtotal amount before tax/tip if shown separately)",
+        "- tax: number (tax amount if shown, otherwise 0)",
+        "- tip: number (tip/gratuity amount if shown, otherwise 0)",
+        "- total: number (final total amount)",
+        "- items: array of objects, each with:",
+        "  * name: string (item description/name)",
+        "  * quantity: number (default to 1 if not specified)",
+        "  * price: number (unit price per item)",
+        "  * total: number (line total = price × quantity, if different from price)",
+        "- rawText: string (cleaned text of key receipt lines for reference)",
+        "",
+        "IMPORTANT RULES:",
+        "1. Extract EVERY item from the receipt, not just a sample",
+        "2. Numbers should be pure decimals with NO currency symbols (e.g., 12.99 not $12.99)",
+        "3. If quantity is not specified, use 1",
+        "4. Be flexible with receipt formats - they vary widely",
+        "5. If you can't find specific fields (like tax/tip), set them to 0",
+        "6. Focus on accuracy - every item matters for splitting bills",
+        "7. If the receipt is in a language other than English, translate item names to English",
+        "",
+        "Return ONLY valid JSON, no other text.",
+      ].join(" ");
+
+      const openAiResponse = await axios.post(
+        "https://api.openai.com/v1/chat/completions",
         {
-          image: {
-            content: image, // The Base64 encoded image string
-          },
-          features: [
+          model: "gpt-4o",
+          temperature: 0,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: systemPrompt },
             {
-              type: "DOCUMENT_TEXT_DETECTION",
+              role: "user",
+              content: [
+                {
+                  type: "text",
+                  text: "Please analyze this receipt image and extract all items and totals. Make sure to capture every single item on the receipt.",
+                },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:image/jpeg;base64,${normalizedImage}`,
+                    detail: "high",
+                  },
+                },
+              ],
             },
           ],
         },
-      ],
-    };
+        {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${resolvedOpenAiKey}`,
+          },
+          timeout: 30_000,
+        },
+      );
 
-    const visionResponse = await axios.post<VisionApiResponse>(visionApiUrl, requestBody);
+      const content = openAiResponse.data?.choices?.[0]?.message?.content;
+      if (typeof content !== "string") {
+        logger.error("processReceiptImage: OpenAI response missing content", {
+          response: JSON.stringify(openAiResponse.data),
+        });
+        throw new Error("OpenAI response missing content.");
+      }
 
-    // 4. A very basic parser for the response.
-    //    This should be expanded to match the logic in your app's OCRResult model.
-    const firstResponse = visionResponse.data.responses?.[0];
-    const fullText = firstResponse?.textAnnotations?.[0]?.description ?? "";
+      logger.info("processReceiptImage: Received OpenAI response", {
+        contentLength: content.length,
+      });
 
-    // TODO: Implement more robust parsing here to extract items, prices, totals, etc.
-    // For now, we'll just return the raw text.
-    
+      const candidate = JSON.parse(content) as ParsedReceipt;
+      parsedReceipt = {
+        merchantName: typeof candidate.merchantName === "string" ? candidate.merchantName : null,
+        currencyCode: typeof candidate.currencyCode === "string" ? candidate.currencyCode.toUpperCase() : null,
+        subtotal: coerceNumber(candidate.subtotal),
+        tax: coerceNumber(candidate.tax),
+        tip: coerceNumber(candidate.tip),
+        total: coerceNumber(candidate.total),
+        items: sanitizeItems(candidate.items),
+        rawText: typeof candidate.rawText === "string" ? candidate.rawText : null,
+      };
+
+      logger.info("processReceiptImage: Successfully parsed receipt", {
+        merchantName: parsedReceipt.merchantName,
+        itemCount: parsedReceipt.items?.length ?? 0,
+        total: parsedReceipt.total,
+      });
+    } catch (error) {
+      const axiosError = error as any;
+
+      // Log detailed error information
+      if (axiosError.response) {
+        logger.error("processReceiptImage: OpenAI API error", {
+          status: axiosError.response.status,
+          statusText: axiosError.response.statusText,
+          data: JSON.stringify(axiosError.response.data),
+        });
+
+        // Provide more specific error messages
+        if (axiosError.response.status === 401) {
+          throw new functions.https.HttpsError(
+            "failed-precondition",
+            "OpenAI API key is invalid. Please contact support.",
+          );
+        } else if (axiosError.response.status === 429) {
+          throw new functions.https.HttpsError(
+            "resource-exhausted",
+            "Too many requests. Please try again in a moment.",
+          );
+        }
+      } else if (axiosError.request) {
+        logger.error("processReceiptImage: Network error", {
+          message: axiosError.message,
+        });
+        throw new functions.https.HttpsError(
+          "unavailable",
+          "Could not reach OpenAI service. Please check your internet connection.",
+        );
+      } else {
+        logger.error("processReceiptImage: Parsing error", {
+          message: axiosError.message,
+          stack: axiosError.stack,
+        });
+      }
+
+      throw new functions.https.HttpsError(
+        "internal",
+        "Failed to interpret the receipt. Please ensure the image is clear and try again.",
+      );
+    }
+
     return {
-      rawText: fullText,
-      // You would eventually return a fully parsed object like this:
-      // merchantName: "Example Store",
-      // items: [{ name: "Item 1", price: 10.99 }],
-      // total: 10.99
+      rawText: parsedReceipt.rawText ?? null,
+      merchantName: parsedReceipt.merchantName,
+      currencyCode: parsedReceipt.currencyCode,
+      subtotal: parsedReceipt.subtotal,
+      tax: parsedReceipt.tax,
+      tip: parsedReceipt.tip,
+      total: parsedReceipt.total,
+      items: parsedReceipt.items,
     };
+  });
 
-  } catch (error) {
-    console.error("Error calling Vision API:", error);
-    throw new functions.https.HttpsError(
-      "internal",
-      "An error occurred while processing the receipt."
-    );
+function normalizeBase64Image(base64: string): string {
+  const trimmed = base64.replace(/^data:image\/[a-zA-Z]+;base64,/, "").replace(/\s+/g, "");
+  return trimmed;
+}
+
+function coerceNumber(value: unknown): number | null {
+  const numeric = typeof value === "string" ? Number(value) : value;
+  if (typeof numeric !== "number" || Number.isNaN(numeric) || !Number.isFinite(numeric)) {
+    return null;
   }
-});
+  return Number(numeric.toFixed(2));
+}
+
+function sanitizeItems(items: unknown): Array<Required<ParsedReceiptItem>> {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const sanitized: Array<Required<ParsedReceiptItem>> = [];
+  for (const entry of items.slice(0, 50)) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+    const parsedEntry = entry as ParsedReceiptItem;
+    const name = typeof parsedEntry.name === "string" ? parsedEntry.name.trim() : "";
+
+    if (!name) {
+      continue;
+    }
+
+    const quantity = coerceQuantity(parsedEntry.quantity);
+    const price = coerceNumber(parsedEntry.price) ?? 0;
+
+    let lineTotal = coerceNumber(parsedEntry.total);
+    if (lineTotal === null && price && quantity) {
+      lineTotal = Number((price * quantity).toFixed(2));
+    }
+
+    sanitized.push({
+      name,
+      quantity,
+      price,
+      total: lineTotal ?? price,
+    });
+  }
+
+  return sanitized;
+}
+
+function coerceQuantity(value: unknown): number {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.max(1, Math.round(value));
+  }
+
+  if (typeof value === "string") {
+    const numeric = Number(value);
+    if (Number.isFinite(numeric) && numeric > 0) {
+      return Math.max(1, Math.round(numeric));
+    }
+  }
+
+  return 1;
+}
 
 function detectNewExpenses(before: ExpenseDoc[] | undefined, after: ExpenseDoc[] | undefined): ExpenseDoc[] {
   const beforeIds = new Set((before ?? []).map((expense) => expense.id));
