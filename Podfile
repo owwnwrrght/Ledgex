@@ -11,5 +11,7 @@ target 'Ledgex' do
   pod 'Firebase/Storage'
   pod 'Firebase/Messaging'
   pod 'Firebase/Functions'
+  pod 'GoogleSignIn', '~> 7.0'
+  pod 'GTMSessionFetcher/Core', '~> 3.4'
 
 end

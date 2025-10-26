@@ -7,7 +7,6 @@ struct TripDetailView: View {
     @State private var selectedTab = 0
     @State private var showingShareSheet = false
     @State private var showingAddExpense = false
-    @State private var showingReceiptScanner = false
     @State private var showingFlagPicker = false
     @State private var showingSettings = false
     
@@ -94,7 +93,7 @@ struct TripDetailView: View {
             ShareTripView(trip: viewModel.trip)
         }
         .sheet(isPresented: $showingAddExpense) {
-            AddExpenseView(viewModel: viewModel)
+            ExpenseEntryFlowView(viewModel: viewModel)
         }
         .sheet(isPresented: $showingFlagPicker) {
             FlagPickerView(currentSelection: viewModel.trip.flagEmoji) { newFlag in
@@ -103,12 +102,6 @@ struct TripDetailView: View {
         }
         .sheet(isPresented: $showingSettings) {
             TripSettingsView(viewModel: viewModel)
-        }
-        .fullScreenCover(isPresented: $showingReceiptScanner) {
-            ReceiptScannerView(viewModel: viewModel) { image, ocrResult in
-                showingReceiptScanner = false
-                viewModel.pendingItemizedExpense = (image, ocrResult)
-            }
         }
         .sheet(item: itemWrapperBinding) { wrapper in
             ItemizedExpenseView(

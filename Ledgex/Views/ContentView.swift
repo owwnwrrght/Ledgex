@@ -76,13 +76,6 @@ private extension ContentView {
             NavigationStack {
                 TripListView(viewModel: tripListViewModel)
             }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: { showingProfile = true }) {
-                        Image(systemName: "person.circle.fill")
-                    }
-                }
-            }
             .sheet(isPresented: $showingProfile) {
                 ProfileView()
             }

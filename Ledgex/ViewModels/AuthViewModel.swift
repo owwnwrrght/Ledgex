@@ -1,11 +1,13 @@
 import AuthenticationServices
 import CryptoKit
 import FirebaseAuth
+import FirebaseCore
 import FirebaseFirestore
 import Foundation
 import Security
 import UIKit
 import Combine
+import GoogleSignIn
 
 extension Notification.Name {
     static let ledgexUserDidSignIn = Notification.Name("LedgexUserDidSignIn")
@@ -27,6 +29,7 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     enum AuthErrorStage: String {
         case initialization = "Initialization"
         case appleAuthorization = "Apple Authorization"
+        case googleAuthorization = "Google Authorization"
         case credentialExtraction = "Credential Extraction"
         case nonceValidation = "Nonce Validation"
         case tokenExtraction = "Token Extraction"
@@ -56,6 +59,8 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     private var pendingAction: PendingAction = .signIn
     private var authorizationController: ASAuthorizationController?
     private var authStartTime: Date?
+    private let maxFirebaseSignInAttempts = 3
+    private var cachedPresentationAnchor: ASPresentationAnchor?
     
     override init() {
         let user = Auth.auth().currentUser
@@ -128,6 +133,16 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         pendingAction = .signIn
         isProcessing = false
     }
+
+    @MainActor
+    func updatePresentationAnchor(_ anchor: ASPresentationAnchor?) {
+        cachedPresentationAnchor = anchor
+        if let anchor {
+            logError(stage: .systemPermissions, message: "Presentation anchor resolved: \(anchor)")
+        } else {
+            logError(stage: .systemPermissions, message: "Presentation anchor cleared")
+        }
+    }
     
     func switchToEmailFlow() {
         currentFlow = .emailPassword
@@ -140,6 +155,10 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
 
     func signUpWithEmail() {
         Task { @MainActor in await performEmailSignUp() }
+    }
+
+    func signInWithGoogle() {
+        Task { await startGoogleSignInFlow() }
     }
 
     func cancelEmailReauth() {
@@ -487,28 +506,40 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     
     // MARK: - ASAuthorizationControllerPresentationContextProviding
     nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
-        // Must return synchronously, using MainActor.assumeIsolated for safe main-thread access
-        return MainActor.assumeIsolated {
-            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-            let activeScene = scenes.first { $0.activationState == .foregroundActive }
-
-            if let window = activeScene?.windows.first(where: { $0.isKeyWindow }) ?? activeScene?.windows.first {
-                return window
+        MainActor.assumeIsolated {
+            if let anchor = cachedPresentationAnchor, anchor.windowScene != nil {
+                return anchor
+            } else {
+                cachedPresentationAnchor = nil
             }
 
-            // Fallback to any available window
-            for scene in scenes {
-                if let window = scene.windows.first {
-                    return window
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            let prioritizedStates: [UIScene.ActivationState] = [.foregroundActive, .foregroundInactive, .background, .unattached]
+
+            for state in prioritizedStates {
+                for scene in scenes where scene.activationState == state {
+                    if let keyWindow = scene.windows.first(where: { $0.isKeyWindow }) {
+                        cachedPresentationAnchor = keyWindow
+                        return keyWindow
+                    }
                 }
             }
 
-            // Last resort: create a new window (shouldn't happen but satisfies type)
-            if let scene = scenes.first {
-                return UIWindow(windowScene: scene)
+            for state in prioritizedStates {
+                for scene in scenes where scene.activationState == state {
+                    if let visibleWindow = scene.windows.first(where: { !$0.isHidden && $0.alpha > 0 }) {
+                        cachedPresentationAnchor = visibleWindow
+                        return visibleWindow
+                    }
+                }
             }
 
-            fatalError("No window scene available for Apple Sign In presentation")
+            if let fallback = scenes.first?.windows.first {
+                cachedPresentationAnchor = fallback
+                return fallback
+            }
+
+            return UIWindow(frame: UIScreen.main.bounds)
         }
     }
     
@@ -629,7 +660,8 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
                 logError(stage: .firebaseSignIn, message: "Error type: \(type(of: error))")
                 logError(stage: .firebaseSignIn, message: "Error: \(error.localizedDescription)")
 
-                if let nsError = error as NSError? {
+                let nsError = error as NSError?
+                if let nsError {
                     print("🔐 [Auth] NSError domain: \(nsError.domain), code: \(nsError.code)")
                     print("🔐 [Auth] NSError userInfo: \(nsError.userInfo)")
 
@@ -654,7 +686,12 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
                 }
 
                 await MainActor.run {
-                    self.errorMessage = error.localizedDescription
+                    if let nsError {
+                        let userMessage = self.userFacingMessage(for: nsError) ?? error.localizedDescription
+                        self.errorMessage = userMessage
+                    } else {
+                        self.errorMessage = error.localizedDescription
+                    }
                     self.isProcessing = false
                     self.pendingAction = .signIn
                 }
@@ -855,9 +892,35 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         }
     }
     
-    private func signInWithFirebase(credential: AuthCredential) async throws -> AuthDataResult {
-        print("🔐 [Auth] signInWithFirebase() called")
-        logError(stage: .firebaseSignIn, message: "Calling Firebase Auth.signIn()...")
+    private func signInWithFirebase(credential: AuthCredential, attempt: Int = 1) async throws -> AuthDataResult {
+        print("🔐 [Auth] signInWithFirebase() called (attempt \(attempt))")
+        logError(stage: .firebaseSignIn, message: "Calling Firebase Auth.signIn()... (attempt \(attempt))")
+
+        do {
+            let result = try await performFirebaseSignIn(credential: credential)
+            if attempt > 1 {
+                logError(stage: .firebaseSignIn, message: "✅ Firebase sign-in succeeded on retry attempt \(attempt)")
+            }
+            return result
+        } catch {
+            let retryPlan = firebaseRetryPlan(for: error, attempt: attempt)
+            if let retryPlan, attempt < maxFirebaseSignInAttempts {
+                logError(stage: .firebaseSignIn, message: "⚠️ Firebase sign-in attempt \(attempt) failed with retryable error: \(error.localizedDescription)")
+                if let code = retryPlan.code {
+                    logError(stage: .firebaseSignIn, message: "Will retry for Firebase Auth error code \(code.rawValue)")
+                }
+                logError(stage: .firebaseSignIn, message: "Retrying in \(String(format: "%.2f", retryPlan.delay))s (attempt \(attempt + 1)/\(maxFirebaseSignInAttempts))")
+                try await Task.sleep(nanoseconds: UInt64(retryPlan.delay * 1_000_000_000))
+                return try await signInWithFirebase(credential: credential, attempt: attempt + 1)
+            }
+
+            logError(stage: .firebaseSignIn, message: "❌ Firebase sign-in giving up after \(attempt) attempt(s)")
+            throw error
+        }
+    }
+
+    private func performFirebaseSignIn(credential: AuthCredential) async throws -> AuthDataResult {
+        print("🔐 [Auth] performFirebaseSignIn() called")
 
         let startTime = Date()
         return try await withCheckedThrowingContinuation { continuation in
@@ -894,6 +957,26 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         }
     }
 
+    private func firebaseRetryPlan(for error: Error, attempt: Int) -> (delay: TimeInterval, code: AuthErrorCode?)? {
+        guard let nsError = error as NSError? else { return nil }
+
+        if nsError.domain == NSURLErrorDomain {
+            return (delay: min(2.5, pow(2.0, Double(attempt - 1)) * 0.75), code: nil)
+        }
+
+        if nsError.domain == "FIRAuthErrorDomain",
+           let code = AuthErrorCode(rawValue: nsError.code) {
+            switch code {
+            case .networkError, .webNetworkRequestFailed, .internalError, .webInternalError, .tooManyRequests:
+                return (delay: min(2.5, pow(2.0, Double(attempt - 1)) * 0.75), code: code)
+            default:
+                return nil
+            }
+        }
+
+        return nil
+    }
+
     private func logError(stage: AuthErrorStage, message: String) {
         let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
         let logEntry = "[\(timestamp)] [\(stage.rawValue)] \(message)"
@@ -906,7 +989,19 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         guard validateEmailPasswordInputs() else { return }
         isProcessing = true
         do {
-            let result = try await Auth.auth().signIn(withEmail: email.trimmingCharacters(in: .whitespacesAndNewlines), password: password)
+            let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+            let providers = try await fetchSignInMethods(for: trimmedEmail)
+
+            if let redirectMessage = providerRedirectMessage(from: providers), !providers.contains("password") {
+                await MainActor.run {
+                    self.isProcessing = false
+                    self.errorMessage = redirectMessage
+                    self.emailModeIsSignUp = false
+                }
+                return
+            }
+
+            let result = try await Auth.auth().signIn(withEmail: trimmedEmail, password: password)
             try await postAuthenticationSetup(with: result)
             await MainActor.run {
                 isProcessing = false
@@ -925,6 +1020,17 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
         isProcessing = true
         do {
             let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+            let providers = try await fetchSignInMethods(for: trimmedEmail)
+
+            if let redirectMessage = providerRedirectMessage(from: providers) {
+                await MainActor.run {
+                    self.isProcessing = false
+                    self.errorMessage = redirectMessage
+                    self.emailModeIsSignUp = false
+                }
+                return
+            }
+
             let result = try await Auth.auth().createUser(withEmail: trimmedEmail, password: password)
             try await postAuthenticationSetup(with: result, requiresNameCapture: true)
             await MainActor.run {
@@ -1109,22 +1215,212 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
 
         if nsError.domain == AuthErrorDomain,
            let authCode = AuthErrorCode(rawValue: nsError.code) {
-            if authCode == .accountExistsWithDifferentCredential {
+            switch authCode {
+            case .accountExistsWithDifferentCredential:
                 return "An account already exists with a different sign-in method. Try email instead."
-            } else if authCode == .networkError {
-                return "We couldn’t reach the server. Check your connection and try again."
-            } else if authCode == .appNotAuthorized {
+            case .credentialAlreadyInUse:
+                return "This Apple ID is already linked to a Ledgex account. Try signing in instead."
+            case .networkError, .webNetworkRequestFailed:
+                return "We couldn’t reach Apple’s servers. Check your connection and try again."
+            case .tooManyRequests:
+                return "Apple temporarily rate-limited sign-ins. Please wait a moment and try again."
+            case .appNotAuthorized:
                 return "This build isn’t authorized for Sign in with Apple. Please use the App Store version."
-            } else if authCode == .webContextAlreadyPresented || authCode == .webContextCancelled {
+            case .invalidCredential, .invalidUserToken, .sessionExpired:
+                return "Apple couldn’t verify the sign-in request. Please try again."
+            case .internalError, .webInternalError:
+                return "Apple’s sign-in service hit an unexpected issue. Please try again."
+            case .userDisabled:
+                return "This account has been disabled. Contact Ledgex support if you believe this is a mistake."
+            case .webContextAlreadyPresented, .webContextCancelled:
                 return nil
+            default:
+                return "Sign in with Apple hit an unexpected issue. Please try again."
             }
-            
-            return "Sign in with Apple hit an unexpected issue. Please try again."
         }
 
         return nil
     }
+
+    @MainActor
+    private func startGoogleSignInFlow() async {
+        guard !isProcessing else { return }
+
+        detailedErrorLog = []
+        errorMessage = nil
+        authStartTime = Date()
+        logError(stage: .initialization, message: "Google sign-in initiated at \(Date())")
+
+        isProcessing = true
+
+        do {
+            let result = try await beginGoogleSignIn()
+            let user = result.user
+            logError(stage: .googleAuthorization, message: "Google sign-in succeeded")
+            logError(stage: .credentialExtraction, message: "Google user ID: \(user.userID ?? "nil")")
+            logError(stage: .credentialExtraction, message: "Google email: \(user.profile?.email ?? "nil")")
+
+            guard let idToken = user.idToken?.tokenString else {
+                logError(stage: .tokenExtraction, message: "❌ Missing Google ID token")
+                throw NSError(domain: "LedgexAuth", code: -101, userInfo: [NSLocalizedDescriptionKey: "We couldn't fetch your Google ID token."])
+            }
+
+            let accessToken = user.accessToken.tokenString
+            logError(stage: .tokenExtraction, message: "✅ Received Google ID token (\(idToken.count) chars)")
+            logError(stage: .tokenExtraction, message: "✅ Received Google access token (\(accessToken.count) chars)")
+
+            let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
+            logError(stage: .firebaseCredential, message: "✅ Firebase credential created for google.com")
+
+            let authResult = try await signInWithFirebase(credential: credential)
+            logError(stage: .firebaseSignIn, message: "✅ Firebase sign-in completed for \(authResult.user.uid)")
+
+            try await postAuthenticationSetup(with: authResult)
+            let totalElapsed = authStartTime.map { String(format: "%.2f", Date().timeIntervalSince($0)) } ?? "?"
+            logError(stage: .profileSetup, message: "✅ COMPLETE (Google) - Total time: \(totalElapsed)s")
+
+            isProcessing = false
+            errorMessage = nil
+            currentFlow = .signInWithApple
+        } catch {
+            await handleGoogleSignInError(error)
+        }
+    }
+
+    @MainActor
+    private func beginGoogleSignIn() async throws -> GIDSignInResult {
+        guard let clientID = FirebaseApp.app()?.options.clientID else {
+            logError(stage: .googleAuthorization, message: "❌ Missing Firebase clientID for Google configuration")
+            throw NSError(domain: "LedgexAuth", code: -100, userInfo: [NSLocalizedDescriptionKey: "Google Sign-In is not configured."])
+        }
+
+        let configuration = GIDConfiguration(clientID: clientID)
+        GIDSignIn.sharedInstance.configuration = configuration
+        logError(stage: .googleAuthorization, message: "Configured Google Sign-In with client ID \(clientID)")
+
+        guard let presenter = resolvePresentingViewController() else {
+            logError(stage: .googleAuthorization, message: "❌ Unable to locate presenting view controller for Google Sign-In")
+            throw NSError(domain: "LedgexAuth", code: -103, userInfo: [NSLocalizedDescriptionKey: "Unable to start Google Sign-In from this screen."])
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            let signIn = GIDSignIn.sharedInstance
+            signIn.signOut()
+            signIn.signIn(withPresenting: presenter) { result, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else if let result {
+                    continuation.resume(returning: result)
+                } else {
+                    continuation.resume(throwing: NSError(domain: "LedgexAuth", code: -102, userInfo: [NSLocalizedDescriptionKey: "Google Sign-In returned no result."]))
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func handleGoogleSignInError(_ error: Error) async {
+        isProcessing = false
+
+        let nsError = error as NSError
+        logError(stage: .googleAuthorization, message: "❌ Google Sign-In error: \(nsError.domain) (\(nsError.code)) - \(nsError.localizedDescription)")
+
+        if nsError.domain == kGIDSignInErrorDomain {
+            switch nsError.code {
+            case -5: // User canceled
+                logError(stage: .googleAuthorization, message: "User canceled Google Sign-In")
+                errorMessage = nil
+                return
+            case -2, -4: // Keychain issues / no auth in keychain
+                errorMessage = "Google Sign-In couldn't restore your session. Please try again."
+                return
+            default:
+                errorMessage = "Google Sign-In hit an unexpected issue. Please try again."
+                return
+            }
+        }
+
+        if let userMessage = userFacingMessage(for: nsError) {
+            errorMessage = userMessage
+        } else {
+            errorMessage = "Google Sign-In is unavailable right now. Please try again."
+        }
+    }
+
+    @MainActor
+    private func resolvePresentingViewController() -> UIViewController? {
+        if let anchor = cachedPresentationAnchor,
+           anchor.windowScene != nil,
+           let root = anchor.rootViewController {
+            return topViewController(from: root)
+        }
+
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let prioritizedStates: [UIScene.ActivationState] = [.foregroundActive, .foregroundInactive, .background, .unattached]
+
+        for state in prioritizedStates {
+            for scene in scenes where scene.activationState == state {
+                if let root = scene.windows.first(where: { $0.isKeyWindow })?.rootViewController {
+                    return topViewController(from: root)
+                }
+            }
+        }
+
+        for state in prioritizedStates {
+            for scene in scenes where scene.activationState == state {
+                if let root = scene.windows.first?.rootViewController {
+                    return topViewController(from: root)
+                }
+            }
+        }
+
+        return nil
+    }
+
+    private func topViewController(from controller: UIViewController?) -> UIViewController? {
+        if let navigation = controller as? UINavigationController {
+            return topViewController(from: navigation.visibleViewController)
+        }
+        if let tab = controller as? UITabBarController, let selected = tab.selectedViewController {
+            return topViewController(from: selected)
+        }
+        if let presented = controller?.presentedViewController {
+            return topViewController(from: presented)
+        }
+        return controller
+    }
     
+    private func fetchSignInMethods(for email: String) async throws -> [String] {
+        try await withCheckedThrowingContinuation { continuation in
+            Auth.auth().fetchSignInMethods(forEmail: email) { methods, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume(returning: methods ?? [])
+                }
+            }
+        }
+    }
+
+    private func providerRedirectMessage(from providers: [String]) -> String? {
+        var options: [String] = []
+        if providers.contains("apple.com") {
+            options.append("Sign in with Apple")
+        }
+        if providers.contains("google.com") {
+            options.append("Sign in with Google")
+        }
+        guard !options.isEmpty else { return nil }
+        let message: String
+        if options.count == 1 {
+            message = options[0]
+        } else {
+            let firstOptions = options.dropLast().joined(separator: ", ")
+            message = "\(firstOptions) or \(options.last!)"
+        }
+        return "This email is already linked to \(message). Please use that option instead."
+    }
+
     private func randomNonceString(length: Int = 32) -> String {
         precondition(length > 0)
         let charset: [Character] = Array("0123456789ABCDEFGHIJKLMNOPQRSTUVXYZabcdefghijklmnopqrstuvwxyz-._")

@@ -15,7 +15,7 @@ struct SignInView: View {
                 Text("Sign in to Ledgex")
                     .font(.title)
                     .fontWeight(.bold)
-                Text("Use Sign in with Apple for the fastest setup, or opt for email instead.")
+                Text("Use Sign in with Apple or Google for the fastest setup, or opt for email instead.")
                     .font(.body)
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
@@ -35,6 +35,10 @@ struct SignInView: View {
                     .frame(height: 52)
                     .cornerRadius(12)
                     .disabled(authViewModel.isProcessing)
+                    .padding(.horizontal)
+
+                    googleSignInButton
+                        .disabled(authViewModel.isProcessing)
 
                     Button(action: authViewModel.switchToEmailFlow) {
                         Text("Prefer email and password?")
@@ -116,7 +120,41 @@ struct SignInView: View {
             Spacer()
         }
         .padding()
+        .background(
+            WindowAccessor { window in
+                authViewModel.updatePresentationAnchor(window)
+            }
+            .allowsHitTesting(false)
+        )
         .ledgexBackground()
+    }
+
+    private var googleSignInButton: some View {
+        Button(action: authViewModel.signInWithGoogle) {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .fill(Color.white)
+                        .frame(width: 24, height: 24)
+                    Text("G")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.black)
+                }
+                Text("Sign in with Google")
+                    .font(.headline)
+                    .foregroundColor(.primary)
+                Spacer()
+            }
+            .padding()
+            .background(Color(.systemBackground))
+            .cornerRadius(12)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color(.systemGray4), lineWidth: 1)
+            )
+        }
+        .padding(.horizontal)
+        .accessibilityLabel("Sign in with Google")
     }
 
     private var emailSignInForm: some View {

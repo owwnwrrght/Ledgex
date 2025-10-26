@@ -7,6 +7,8 @@ struct AddExpenseView: View {
     @ObservedObject var viewModel: ExpenseViewModel
     @Environment(\.dismiss) var dismiss
     
+    private let embedInNavigationView: Bool
+    
     @State private var description = ""
     @State private var amount = ""
     @State private var selectedCurrency: Currency = .USD
@@ -19,9 +21,6 @@ struct AddExpenseView: View {
     @State private var isLoadingRate = false
     @State private var showingAdvancedOptions = false
 
-    // Receipt photo support
-    @State private var receiptImages: [UIImage] = []
-    @State private var showingReceiptScanner = false
     @State private var hasAppliedInitialDefaults = false
     @State private var lastExpenseTemplate: Expense?
     
@@ -34,8 +33,9 @@ struct AddExpenseView: View {
     
     private enum Field { case description, amount }
     
-    init(viewModel: ExpenseViewModel) {
+    init(viewModel: ExpenseViewModel, embedInNavigationView: Bool = true) {
         self._viewModel = ObservedObject(initialValue: viewModel)
+        self.embedInNavigationView = embedInNavigationView
     }
 
     // MARK: - Validation
@@ -77,60 +77,73 @@ struct AddExpenseView: View {
     }
     
     var body: some View {
-        NavigationView {
-            Form {
-                if let template = lastExpenseTemplate {
-                    templateSection(for: template)
-                }
-                
-                expenseDetailsSection
-                
-                if showingAdvancedOptions {
-                    advancedOptionsSection
-                } else {
-                    editDetailsButton
-                }
-            }
-            .navigationTitle("Add Expense")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    Button(action: joinExpenseFlow) {
-                        if isConverting || viewModel.isUploadingReceipts {
-                            HStack(spacing: 8) {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text(viewModel.isUploadingReceipts ? "Saving…" : "Converting…")
+        Group {
+            if embedInNavigationView {
+                NavigationView {
+                    formContent
+                        .navigationTitle("Add Expense")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Cancel") { dismiss() }
                             }
-                        } else {
-                            Text("Add Expense")
+                            ToolbarItem(placement: .primaryAction) {
+                                addExpenseButton
+                            }
+                        }
+                }
+            } else {
+                formContent
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            addExpenseButton
                         }
                     }
-                    .disabled(!isValid || isConverting || viewModel.isUploadingReceipts)
-                }
-            }
-            .sheet(isPresented: $showingCurrencyPicker) {
-                CurrencyPickerView(selectedCurrency: $selectedCurrency)
-            }
-            .fullScreenCover(isPresented: $showingReceiptScanner) {
-                ReceiptScannerView(viewModel: viewModel) { image, ocrResult in
-                    dismiss()
-                    viewModel.pendingItemizedExpense = (image, ocrResult)
-                }
-            }
-            .onAppear(perform: configureView)
-            .onChange(of: selectedCurrency) { _ in updateExchangeRate() }
-            .onChange(of: viewModel.people.map(\.id)) { _ in
-                syncSelection(with: viewModel.people)
-            }
-            .onChange(of: splitType, perform: handleSplitTypeChange)
-            .onChange(of: viewModel.expenses.map(\.id)) { _ in
-                lastExpenseTemplate = viewModel.expenses.last
             }
         }
+    }
+
+    private var formContent: some View {
+        Form {
+            if let template = lastExpenseTemplate {
+                templateSection(for: template)
+            }
+
+            expenseDetailsSection
+
+            if showingAdvancedOptions {
+                advancedOptionsSection
+            } else {
+                editDetailsButton
+            }
+        }
+        .sheet(isPresented: $showingCurrencyPicker) {
+            CurrencyPickerView(selectedCurrency: $selectedCurrency)
+        }
+        .onAppear(perform: configureView)
+        .onChange(of: selectedCurrency) { _ in updateExchangeRate() }
+        .onChange(of: viewModel.people.map(\.id)) { _ in
+            syncSelection(with: viewModel.people)
+        }
+        .onChange(of: splitType, perform: handleSplitTypeChange)
+        .onChange(of: viewModel.expenses.map(\.id)) { _ in
+            lastExpenseTemplate = viewModel.expenses.last
+        }
+    }
+
+    private var addExpenseButton: some View {
+        Button(action: joinExpenseFlow) {
+            if isConverting || viewModel.isUploadingReceipts {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text(viewModel.isUploadingReceipts ? "Saving…" : "Converting…")
+                }
+            } else {
+                Text("Add Expense")
+            }
+        }
+        .disabled(!isValid || isConverting || viewModel.isUploadingReceipts)
     }
     
     // MARK: - Sections
@@ -206,8 +219,6 @@ struct AddExpenseView: View {
             if splitType == .custom && !amount.isEmpty {
                 remainingAmountSection
             }
-            
-            receiptSection
         }
     }
 
@@ -393,42 +404,6 @@ struct AddExpenseView: View {
         }
     }
     
-    @ViewBuilder
-    private var receiptSection: some View {
-        Section {
-            Button(action: { showingReceiptScanner = true }) {
-                HStack(spacing: 12) {
-                    Image(systemName: "doc.text.viewfinder")
-                        .font(.title2)
-                        .foregroundColor(.blue)
-                        .frame(width: 24, height: 24)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Scan Receipt")
-                        .font(.body)
-                        .foregroundColor(.primary)
-                    Text("Auto-split by items")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-                .padding(.vertical, 4)
-            }
-            .buttonStyle(.plain)
-
-            ReceiptAttachmentView(receiptImages: $receiptImages)
-        } header: {
-            Text("Receipt")
-        } footer: {
-            Text("Scan receipts to automatically split by individual items.")
-                .font(.caption)
-        }
-    }
-
     // MARK: - Actions
     private func joinExpenseFlow() {
         guard isValid else { return }
@@ -472,21 +447,6 @@ struct AddExpenseView: View {
 
             if let creatorId = profileManager.currentProfile?.id {
                 expense.createdByUserId = creatorId
-            }
-            
-            if !receiptImages.isEmpty {
-                print("📸 Uploading \(receiptImages.count) receipt photos…")
-                await MainActor.run {
-                    viewModel.receiptImages = receiptImages
-                }
-                let uploadedUrls = await viewModel.uploadReceipts(for: expense)
-                expense.receiptImageIds = uploadedUrls
-                await MainActor.run {
-                    viewModel.receiptImages.removeAll()
-                }
-                print("📎 Attached \(uploadedUrls.count) receipt URLs to expense")
-            } else {
-                print("📝 No receipts to upload")
             }
             
             await MainActor.run {

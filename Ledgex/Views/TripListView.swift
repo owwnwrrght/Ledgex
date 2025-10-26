@@ -170,7 +170,11 @@ struct TripSplitView: View {
 
     var body: some View {
         NavigationSplitView {
-            TripSidebarView(viewModel: viewModel, selectedTripID: $selectedTripID)
+            TripSidebarView(
+                viewModel: viewModel,
+                selectedTripID: $selectedTripID,
+                showingProfile: $showingProfile
+            )
         } detail: {
             if let tripID = selectedTripID,
                let trip = viewModel.trips.first(where: { $0.id == tripID }) {
@@ -190,13 +194,6 @@ struct TripSplitView: View {
             }
         }
         .navigationSplitViewColumnWidth(min: 280, ideal: 320, max: 380)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: { showingProfile = true }) {
-                    Image(systemName: "person.circle.fill")
-                }
-            }
-        }
         .sheet(isPresented: $showingProfile) {
             ProfileView()
         }
@@ -219,6 +216,7 @@ private struct TripSidebarView: View {
     @ObservedObject var viewModel: TripListViewModel
     @ObservedObject private var firebaseManager = FirebaseManager.shared
     @Binding var selectedTripID: UUID?
+    @Binding var showingProfile: Bool
     @State private var showingAddTrip = false
 
     var body: some View {
@@ -233,6 +231,11 @@ private struct TripSidebarView: View {
             .listStyle(.sidebar)
             .navigationTitle("Groups")
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { showingProfile = true }) {
+                        Image(systemName: "person.circle.fill")
+                    }
+                }
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
                         Button(action: { showingAddTrip = true }) {
