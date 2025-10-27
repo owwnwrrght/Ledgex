@@ -8,7 +8,6 @@ class ExpenseViewModel: ObservableObject {
     @Published var trip: Trip
     @Published var receiptImages: [UIImage] = []
     @Published var isUploadingReceipts = false
-    @Published var pendingItemizedExpense: (UIImage, OCRResult)?
     
     var people: [Person] {
         trip.people

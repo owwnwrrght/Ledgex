@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 enum SplitType: String, CaseIterable, Codable {
     case equal = "Split Equally"
@@ -26,14 +25,11 @@ struct Expense: Identifiable, Codable {
     var receiptImageIds: [String] = [] // Firebase Storage URLs or local identifiers
     var hasReceipt: Bool { !receiptImageIds.isEmpty }
     
-    // New: Itemized receipt support
-    var receiptItems: [ReceiptItem] = [] // Items extracted from receipt OCR
-    var hasItemizedReceipt: Bool { !receiptItems.isEmpty }
     var createdByUserId: UUID?
     
     // Firebase properties (not stored in local cache)
     enum CodingKeys: String, CodingKey {
-        case id, description, amount, originalAmount, originalCurrency, baseCurrency, exchangeRate, paidBy, splitType, participants, customSplits, date, category, receiptImageIds, receiptItems, createdByUserId
+        case id, description, amount, originalAmount, originalCurrency, baseCurrency, exchangeRate, paidBy, splitType, participants, customSplits, date, category, receiptImageIds, createdByUserId
     }
     
     // Helper to display original amount with currency

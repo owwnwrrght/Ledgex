@@ -16,20 +16,6 @@ struct TripDetailView: View {
         self._viewModel = StateObject(wrappedValue: ExpenseViewModel(trip: trip, dataStore: FirebaseManager.shared, tripListViewModel: tripListViewModel))
     }
     
-    private var itemWrapperBinding: Binding<ItemWrapper?> {
-        Binding(
-            get: { 
-                if let pendingExpense = viewModel.pendingItemizedExpense {
-                    return ItemWrapper(value: pendingExpense)
-                }
-                return nil
-            },
-            set: { _ in 
-                viewModel.pendingItemizedExpense = nil 
-            }
-        )
-    }
-    
     var body: some View {
         ZStack {
             LinearGradient.ledgexBackground
@@ -102,13 +88,6 @@ struct TripDetailView: View {
         }
         .sheet(isPresented: $showingSettings) {
             TripSettingsView(viewModel: viewModel)
-        }
-        .sheet(item: itemWrapperBinding) { wrapper in
-            ItemizedExpenseView(
-                viewModel: viewModel,
-                receiptImage: wrapper.value.0,
-                ocrResult: wrapper.value.1
-            )
         }
 
         .refreshable {

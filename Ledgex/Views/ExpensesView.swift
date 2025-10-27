@@ -38,33 +38,12 @@ struct ExpensesView: View {
         .padding(.vertical, 12)
     }
     
-    private var itemWrapperBinding: Binding<ItemWrapper?> {
-        Binding(
-            get: { 
-                if let pendingExpense = viewModel.pendingItemizedExpense {
-                    return ItemWrapper(value: pendingExpense)
-                }
-                return nil
-            },
-            set: { _ in 
-                viewModel.pendingItemizedExpense = nil 
-            }
-        )
-    }
-    
     var body: some View {
         VStack(spacing: 0) {
             mainContent
                 .listStyle(.insetGrouped)
                 .sheet(item: $expenseToEdit) { expense in
                     EditExpenseView(expense: expense, viewModel: viewModel)
-                }
-                .sheet(item: itemWrapperBinding) { wrapper in
-                    ItemizedExpenseView(
-                        viewModel: viewModel,
-                        receiptImage: wrapper.value.0,
-                        ocrResult: wrapper.value.1
-                    )
                 }
                 .overlay {
                     emptyStateView
@@ -136,7 +115,7 @@ struct ExpensesView: View {
                             .multilineTextAlignment(.center)
                             .padding(.horizontal)
                     } else {
-                        Text("Start by adding your first expense or scanning a receipt.")
+                        Text("Start by adding your first expense.")
                             .font(.body)
                             .foregroundColor(.secondary)
                             .multilineTextAlignment(.center)
