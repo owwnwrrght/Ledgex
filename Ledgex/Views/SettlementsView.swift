@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettlementsView: View {
     @ObservedObject var viewModel: ExpenseViewModel
+    @State private var showingPaymentMethods = false
 
     var body: some View {
         List {
@@ -60,10 +61,24 @@ struct SettlementsView: View {
                     }
                 } header: {
                     Text("Payments")
+                } footer: {
+                    Text("Tap any payment to initiate instant transfer via your linked payment apps")
                 }
             }
         }
         .navigationTitle("Settle Up")
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button {
+                    showingPaymentMethods = true
+                } label: {
+                    Image(systemName: "creditcard.and.123")
+                }
+            }
+        }
+        .sheet(isPresented: $showingPaymentMethods) {
+            PaymentMethodsView()
+        }
     }
 }
 
@@ -73,46 +88,109 @@ struct SettlementRow: View {
     let canToggleReceived: Bool
     let toggleReceived: () -> Void
 
+    @ObservedObject private var paymentService = PaymentService.shared
+    @ObservedObject private var profileManager = ProfileManager.shared
+    @State private var showingPaymentOptions = false
+    @State private var selectedProvider: PaymentProvider?
+    @State private var isProcessingPayment = false
+    @State private var paymentError: String?
+
     var body: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    Text(settlement.from.name)
-                        .font(.body)
-                        .fontWeight(.semibold)
-                    Image(systemName: "arrow.right")
-                        .font(.caption)
-                        .foregroundColor(.blue)
-                    Text(settlement.to.name)
-                        .font(.body)
-                        .fontWeight(.semibold)
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 16) {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Text(settlement.from.name)
+                            .font(.body)
+                            .fontWeight(.semibold)
+                        Image(systemName: "arrow.right")
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                        Text(settlement.to.name)
+                            .font(.body)
+                            .fontWeight(.semibold)
+                    }
 
-                HStack(spacing: 8) {
-                    Text(CurrencyAmount(amount: settlement.amount, currency: baseCurrency).formatted())
-                        .font(.title3)
-                        .fontWeight(.bold)
-                        .foregroundColor(.blue)
+                    HStack(spacing: 8) {
+                        Text(CurrencyAmount(amount: settlement.amount, currency: baseCurrency).formatted())
+                            .font(.title3)
+                            .fontWeight(.bold)
+                            .foregroundColor(.blue)
 
-                    if settlement.isReceived {
-                        HStack(spacing: 3) {
-                            Image(systemName: "checkmark.circle.fill")
+                        if settlement.isReceived {
+                            paymentStatusBadge
+                        } else if let paymentText = settlement.paymentDisplayText {
+                            Text(paymentText)
                                 .font(.caption)
-                            Text("Received")
-                                .font(.caption)
+                                .foregroundColor(.orange)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.orange.opacity(0.15))
+                                .cornerRadius(8)
                         }
-                        .foregroundColor(.green)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(Color.green.opacity(0.15))
-                        .cornerRadius(8)
                     }
                 }
+
+                Spacer()
+
+                actionButtons
             }
 
-            Spacer()
+            if let error = paymentError {
+                errorBanner(error)
+            }
+        }
+        .padding(.vertical, 8)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if !settlement.isReceived && canInitiatePayment {
+                showingPaymentOptions = true
+            }
+        }
+        .confirmationDialog("Choose Payment Method", isPresented: $showingPaymentOptions, titleVisibility: .visible) {
+            paymentOptionsDialog
+        }
+    }
 
-            if canToggleReceived && !settlement.isReceived {
+    @ViewBuilder
+    private var paymentStatusBadge: some View {
+        HStack(spacing: 3) {
+            Image(systemName: settlement.isPaidViaApp ? "checkmark.circle.fill" : "checkmark.circle.fill")
+                .font(.caption)
+            Text(settlement.isPaidViaApp ? "Paid" : "Received")
+                .font(.caption)
+        }
+        .foregroundColor(.green)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.green.opacity(0.15))
+        .cornerRadius(8)
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        if isProcessingPayment {
+            ProgressView()
+        } else if !settlement.isReceived {
+            if canInitiatePayment && hasLinkedAccounts {
+                Button {
+                    showingPaymentOptions = true
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.body)
+                        Text("Pay Now")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                    }
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(Color.green)
+                    .cornerRadius(10)
+                }
+                .buttonStyle(.plain)
+            } else if canToggleReceived {
                 Button(action: toggleReceived) {
                     HStack(spacing: 6) {
                         Image(systemName: "checkmark.circle")
@@ -130,6 +208,97 @@ struct SettlementRow: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var paymentOptionsDialog: some View {
+        // Quick pay with default provider
+        if let defaultProvider = profileManager.currentProfile?.defaultPaymentProvider,
+           paymentService.isProviderAvailable(defaultProvider),
+           let account = profileManager.currentProfile?.paymentAccount(for: defaultProvider) {
+            Button {
+                initiatePayment(with: defaultProvider, account: account)
+            } label: {
+                Label("Pay with \(defaultProvider.displayName)", systemImage: "bolt.fill")
+            }
+        }
+
+        // Other available providers
+        ForEach(availablePaymentProviders, id: \.self) { provider in
+            if let account = profileManager.currentProfile?.paymentAccount(for: provider) {
+                Button {
+                    initiatePayment(with: provider, account: account)
+                } label: {
+                    Text("Pay with \(provider.displayName)")
+                }
+            }
+        }
+
+        Button("Mark as Paid Manually", role: .none) {
+            toggleReceived()
+        }
+
+        Button("Cancel", role: .cancel) {}
+    }
+
+    @ViewBuilder
+    private func errorBanner(_ message: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.red)
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.red)
+        }
+        .padding(8)
+        .background(Color.red.opacity(0.1))
+        .cornerRadius(8)
+    }
+
+    // MARK: - Helper Properties
+
+    private var canInitiatePayment: Bool {
+        guard let profile = profileManager.currentProfile else { return false }
+        // User can initiate payment if they are the "from" person
+        return settlement.from.id == profile.id
+    }
+
+    private var hasLinkedAccounts: Bool {
+        return profileManager.currentProfile?.hasLinkedPaymentAccounts ?? false
+    }
+
+    private var availablePaymentProviders: [PaymentProvider] {
+        guard let accounts = profileManager.currentProfile?.linkedPaymentAccounts else {
+            return []
+        }
+        return accounts
+            .filter { $0.isVerified && paymentService.isProviderAvailable($0.provider) }
+            .map { $0.provider }
+    }
+
+    // MARK: - Payment Action
+
+    private func initiatePayment(with provider: PaymentProvider, account: LinkedPaymentAccount) {
+        isProcessingPayment = true
+        paymentError = nil
+
+        Task {
+            let result = await paymentService.initiatePayment(
+                settlement: settlement,
+                provider: provider,
+                recipientAccount: account
+            )
+
+            await MainActor.run {
+                isProcessingPayment = false
+
+                if result.success {
+                    // Auto-mark as received after successful payment initiation
+                    toggleReceived()
+                } else if let error = result.error {
+                    paymentError = error.localizedDescription
+                }
+            }
+        }
     }
 }

@@ -13,8 +13,20 @@ struct UserProfile: Codable {
     var pushToken: String? = nil
     var notificationsEnabled: Bool = true
 
+    // Payment integrations
+    var linkedPaymentAccounts: [LinkedPaymentAccount] = []
+    var defaultPaymentProvider: PaymentProvider?
+
     init(name: String, firebaseUID: String? = nil) {
         self.name = name
         self.firebaseUID = firebaseUID
+    }
+
+    func paymentAccount(for provider: PaymentProvider) -> LinkedPaymentAccount? {
+        return linkedPaymentAccounts.first(where: { $0.provider == provider && $0.isVerified })
+    }
+
+    var hasLinkedPaymentAccounts: Bool {
+        return !linkedPaymentAccounts.filter({ $0.isVerified }).isEmpty
     }
 }
