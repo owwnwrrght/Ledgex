@@ -341,14 +341,23 @@ struct PaymentMethodsView: View {
         Task {
             await MainActor.run {
                 if var profile = profileManager.currentProfile {
+                    print("💳 [PaymentMethodsView] Adding payment account: \(provider.displayName) - \(accountIdentifier)")
+                    print("💳 [PaymentMethodsView] Current linked accounts: \(profile.linkedPaymentAccounts.count)")
+
                     profile.linkedPaymentAccounts.append(account)
+
+                    print("💳 [PaymentMethodsView] After adding: \(profile.linkedPaymentAccounts.count) accounts")
 
                     // Set as default if it's the first account
                     if profile.linkedPaymentAccounts.count == 1 {
+                        print("💳 [PaymentMethodsView] Setting \(provider.displayName) as default provider")
                         profile.defaultPaymentProvider = provider
                     }
 
                     profileManager.updateProfile(profile)
+                    print("💳 [PaymentMethodsView] Profile updated with new payment account")
+                } else {
+                    print("❌ [PaymentMethodsView] No current profile found!")
                 }
 
                 isAddingAccount = false

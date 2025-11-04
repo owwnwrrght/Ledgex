@@ -52,7 +52,8 @@ struct SettlementsView: View {
                         SettlementRow(
                             settlement: settlement,
                             baseCurrency: viewModel.trip.baseCurrency,
-                            canToggleReceived: viewModel.canToggleSettlementReceived(settlement)
+                            canToggleReceived: viewModel.canToggleSettlementReceived(settlement),
+                            showingPaymentMethods: $showingPaymentMethods
                         ) {
                             Task {
                                 await viewModel.toggleSettlementReceived(settlement)
@@ -62,7 +63,11 @@ struct SettlementsView: View {
                 } header: {
                     Text("Payments")
                 } footer: {
-                    Text("Tap any payment to initiate instant transfer via your linked payment apps")
+                    if ProfileManager.shared.currentProfile?.hasLinkedPaymentAccounts == true {
+                        Text("Tap any payment to initiate instant transfer via your linked payment apps")
+                    } else {
+                        Text("Tap the credit card icon above to link Venmo, Zelle, Cash App, or PayPal for instant payments")
+                    }
                 }
             }
         }
@@ -86,6 +91,7 @@ struct SettlementRow: View {
     let settlement: Settlement
     let baseCurrency: Currency
     let canToggleReceived: Bool
+    @Binding var showingPaymentMethods: Bool
     let toggleReceived: () -> Void
 
     @ObservedObject private var paymentService = PaymentService.shared
@@ -172,24 +178,44 @@ struct SettlementRow: View {
         if isProcessingPayment {
             ProgressView()
         } else if !settlement.isReceived {
-            if canInitiatePayment && hasLinkedAccounts {
-                Button {
-                    showingPaymentOptions = true
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.body)
-                        Text("Pay Now")
-                            .font(.subheadline)
-                            .fontWeight(.medium)
+            if canInitiatePayment {
+                if hasLinkedAccounts {
+                    Button {
+                        showingPaymentOptions = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "arrow.up.circle.fill")
+                                .font(.body)
+                            Text("Pay Now")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.green)
+                        .cornerRadius(10)
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.green)
-                    .cornerRadius(10)
+                    .buttonStyle(.plain)
+                } else {
+                    Button {
+                        showingPaymentMethods = true
+                    } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "creditcard.and.123")
+                                .font(.body)
+                            Text("Set Up")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(Color.orange)
+                        .cornerRadius(10)
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
             } else if canToggleReceived {
                 Button(action: toggleReceived) {
                     HStack(spacing: 6) {
@@ -212,24 +238,34 @@ struct SettlementRow: View {
 
     @ViewBuilder
     private var paymentOptionsDialog: some View {
-        // Quick pay with default provider
-        if let defaultProvider = profileManager.currentProfile?.defaultPaymentProvider,
-           paymentService.isProviderAvailable(defaultProvider),
-           let account = profileManager.currentProfile?.paymentAccount(for: defaultProvider) {
+        // Show setup button if no accounts linked
+        if !hasLinkedAccounts {
             Button {
-                initiatePayment(with: defaultProvider, account: account)
+                showingPaymentMethods = true
+                showingPaymentOptions = false
             } label: {
-                Label("Pay with \(defaultProvider.displayName)", systemImage: "bolt.fill")
+                Label("Set Up Payment Methods", systemImage: "creditcard.and.123")
             }
-        }
-
-        // Other available providers
-        ForEach(availablePaymentProviders, id: \.self) { provider in
-            if let account = profileManager.currentProfile?.paymentAccount(for: provider) {
+        } else {
+            // Quick pay with default provider
+            if let defaultProvider = profileManager.currentProfile?.defaultPaymentProvider,
+               paymentService.isProviderAvailable(defaultProvider),
+               let account = profileManager.currentProfile?.paymentAccount(for: defaultProvider) {
                 Button {
-                    initiatePayment(with: provider, account: account)
+                    initiatePayment(with: defaultProvider, account: account)
                 } label: {
-                    Text("Pay with \(provider.displayName)")
+                    Label("Pay with \(defaultProvider.displayName)", systemImage: "bolt.fill")
+                }
+            }
+
+            // Other available providers
+            ForEach(availablePaymentProviders, id: \.self) { provider in
+                if let account = profileManager.currentProfile?.paymentAccount(for: provider) {
+                    Button {
+                        initiatePayment(with: provider, account: account)
+                    } label: {
+                        Text("Pay with \(provider.displayName)")
+                    }
                 }
             }
         }

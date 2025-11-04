@@ -104,13 +104,21 @@ class ProfileManager: ObservableObject {
         }
     }
 
-    @MainActor func updateProfile(profile: UserProfile) {
+    @MainActor func updateProfile(_ profile: UserProfile) {
         print("👤 [ProfileManager] Updating profile: \(profile.name)")
         print("👤 [ProfileManager] Trip codes: \(profile.tripCodes)")
+        print("👤 [ProfileManager] Linked payment accounts: \(profile.linkedPaymentAccounts.count)")
         currentProfile = profile
 
-        // Don't auto-sync to Firestore here - only sync explicitly when needed
-        // This prevents sync loops and race conditions
+        // Sync to Firestore to persist changes
+        Task {
+            do {
+                try await FirebaseManager.shared.saveUserProfile(profile)
+                print("✅ [ProfileManager] Profile changes synced to Firestore")
+            } catch {
+                print("❌ [ProfileManager] Failed to sync profile to Firestore: \(error)")
+            }
+        }
     }
 
     @MainActor func updateProfileWithFirebaseUID(_ firebaseUID: String) {
