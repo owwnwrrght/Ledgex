@@ -14,4 +14,7 @@ target 'Ledgex' do
   pod 'GoogleSignIn', '~> 7.0'
   pod 'GTMSessionFetcher/Core', '~> 3.4'
 
+  # Payment integration pods
+  pod 'PayPalCheckout', '~> 1.0'
+
 end
