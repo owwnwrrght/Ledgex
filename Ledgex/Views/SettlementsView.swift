@@ -91,6 +91,7 @@ struct SettlementRow: View {
     @ObservedObject private var paymentService = PaymentService.shared
     @ObservedObject private var profileManager = ProfileManager.shared
     @State private var showingPaymentOptions = false
+    @State private var showingNoAccountsAlert = false
     @State private var selectedProvider: PaymentProvider?
     @State private var isProcessingPayment = false
     @State private var paymentError: String?
@@ -144,11 +145,20 @@ struct SettlementRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             if !settlement.isReceived && canInitiatePayment {
-                showingPaymentOptions = true
+                if hasLinkedAccounts {
+                    showingPaymentOptions = true
+                } else {
+                    showingNoAccountsAlert = true
+                }
             }
         }
         .confirmationDialog("Choose Payment Method", isPresented: $showingPaymentOptions, titleVisibility: .visible) {
             paymentOptionsDialog
+        }
+        .alert("No Payment Methods Linked", isPresented: $showingNoAccountsAlert) {
+            Button("OK") {}
+        } message: {
+            Text("To pay via Venmo, Zelle, or other apps, tap the card icon (💳) at the top right to link your payment accounts first.")
         }
     }
 
