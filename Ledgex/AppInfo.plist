@@ -79,5 +79,9 @@
 	<string>Ledgex needs access to your camera to capture receipt photos for expense tracking.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Ledgex needs access to your photo library to select receipt images for expense tracking.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>
