@@ -394,7 +394,7 @@ struct PaymentMethodsView: View {
                         profile.defaultPaymentProvider = provider
                     }
 
-                    profileManager.updateProfile(profile)
+                    profileManager.updateProfile(profile: profile)
                 }
 
                 isAddingAccount = false
@@ -465,7 +465,7 @@ struct PaymentMethodsView: View {
             profile.defaultPaymentProvider = nil
         }
 
-        profileManager.updateProfile(profile)
+        profileManager.updateProfile(profile: profile)
     }
 
     private var hasLinkedAccounts: Bool {
@@ -476,7 +476,7 @@ struct PaymentMethodsView: View {
     private func setAsDefault(_ provider: PaymentProvider) {
         guard var profile = profileManager.currentProfile else { return }
         profile.defaultPaymentProvider = provider
-        profileManager.updateProfile(profile)
+        profileManager.updateProfile(profile: profile)
     }
 
     private func resetAddAccountForm() {

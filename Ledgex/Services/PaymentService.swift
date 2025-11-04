@@ -1,6 +1,7 @@
 import Foundation
 import UIKit
 import PassKit
+import Combine
 
 // MARK: - Payment Service Errors
 enum PaymentError: LocalizedError {
@@ -45,7 +46,7 @@ struct PaymentResult {
 
 // MARK: - Payment Service
 @MainActor
-class PaymentService: ObservableObject {
+class PaymentService: NSObject, ObservableObject {
     static let shared = PaymentService()
 
     @Published var isProcessingPayment = false
@@ -56,7 +57,7 @@ class PaymentService: ObservableObject {
     private var paymentMatchingService = PaymentMatchingService.shared
     private var firebaseManager = FirebaseManager.shared
 
-    private init() {}
+    private override init() {}
 
     // MARK: - Provider Availability Checks
 
@@ -175,8 +176,8 @@ class PaymentService: ObservableObject {
     // MARK: - Apple Pay Cash Implementation
 
     private func processApplePayCash(settlement: Settlement) async -> PaymentResult {
-        // Check if Apple Pay Cash is set up
-        guard PKPaymentAuthorizationController.canMakePayments(usingNetworks: [.applePayCash]) else {
+        // Check if Apple Pay is set up
+        guard PKPaymentAuthorizationController.canMakePayments(usingNetworks: [.visa, .masterCard, .amex, .discover]) else {
             return PaymentResult(success: false, transactionId: nil, error: .providerNotAvailable, provider: .applePay)
         }
 
@@ -185,7 +186,7 @@ class PaymentService: ObservableObject {
         request.merchantIdentifier = "merchant.com.ledgex.app" // Replace with actual merchant ID
         request.countryCode = "US"
         request.currencyCode = settlement.amount as NSDecimalNumber == 0 ? "USD" : "USD" // Use settlement currency
-        request.supportedNetworks = [.applePayCash, .visa, .masterCard, .amex, .discover]
+        request.supportedNetworks = [.visa, .masterCard, .amex, .discover]
         request.merchantCapabilities = .capability3DS
 
         // Create payment summary item
