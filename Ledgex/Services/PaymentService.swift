@@ -53,6 +53,8 @@ class PaymentService: ObservableObject {
 
     private var profileManager = ProfileManager.shared
     private var pkPaymentController: PKPaymentAuthorizationController?
+    private var paymentMatchingService = PaymentMatchingService.shared
+    private var firebaseManager = FirebaseManager.shared
 
     private init() {}
 
@@ -83,6 +85,44 @@ class PaymentService: ObservableObject {
     private func canOpenURL(urlString: String) -> Bool {
         guard let url = URL(string: urlString) else { return false }
         return UIApplication.shared.canOpenURL(url)
+    }
+
+    // MARK: - Auto-Matching Payment Methods
+
+    /// Find common payment methods between payer and recipient
+    /// Returns matches sorted by preference
+    func findMatchedPaymentMethods(
+        payer: UserProfile,
+        recipientFirebaseUID: String?
+    ) async -> [PaymentMatch] {
+        guard let recipientUID = recipientFirebaseUID else {
+            print("⚠️ Cannot find matches - recipient has no Firebase UID")
+            return []
+        }
+
+        do {
+            guard let recipientProfile = try await firebaseManager.fetchUserProfile(byFirebaseUID: recipientUID) else {
+                print("⚠️ Cannot find matches - recipient profile not found")
+                return []
+            }
+
+            return paymentMatchingService.findCommonPaymentMethods(
+                payer: payer,
+                recipient: recipientProfile
+            )
+        } catch {
+            print("❌ Error finding payment matches: \(error)")
+            return []
+        }
+    }
+
+    /// Find the best payment method for a settlement
+    func findBestPaymentMatch(
+        payer: UserProfile,
+        recipientFirebaseUID: String?
+    ) async -> PaymentMatch? {
+        let matches = await findMatchedPaymentMethods(payer: payer, recipientFirebaseUID: recipientFirebaseUID)
+        return matches.first
     }
 
     // MARK: - Main Payment Flow

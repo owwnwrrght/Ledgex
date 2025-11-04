@@ -11,6 +11,7 @@ struct PaymentMethodsView: View {
     @State private var accountDisplayName = ""
     @State private var isAddingAccount = false
     @State private var errorMessage: String?
+    @State private var editMode: EditMode = .inactive
 
     var body: some View {
         NavigationView {
@@ -21,7 +22,13 @@ struct PaymentMethodsView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("Payment Methods")
+            .environment(\.editMode, $editMode)
             .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if hasLinkedAccounts {
+                        EditButton()
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") { dismiss() }
                 }
@@ -38,21 +45,48 @@ struct PaymentMethodsView: View {
     private var linkedAccountsSection: some View {
         if let profile = profileManager.currentProfile, !profile.linkedPaymentAccounts.isEmpty {
             Section {
-                ForEach(profile.linkedPaymentAccounts) { account in
+                ForEach(sortedLinkedAccounts) { account in
                     linkedAccountRow(account)
                 }
                 .onDelete(perform: deleteAccount)
+                .onMove(perform: moveAccount)
             } header: {
                 Text("Linked Accounts")
             } footer: {
-                Text("These payment methods can be used for quick settlements")
+                if editMode == .active {
+                    Text("Drag to reorder. Accounts higher in the list will be prioritized when paying others who have the same payment app.")
+                } else {
+                    Text("Tap 'Edit' to reorder payment methods by preference. Higher priority accounts will be used first when both you and the recipient have them.")
+                }
             }
+        }
+    }
+
+    private var sortedLinkedAccounts: [LinkedPaymentAccount] {
+        guard let profile = profileManager.currentProfile else { return [] }
+        return profile.linkedPaymentAccounts.sorted { a, b in
+            let orderA = a.preferenceOrder ?? 999
+            let orderB = b.preferenceOrder ?? 999
+            return orderA < orderB
         }
     }
 
     @ViewBuilder
     private func linkedAccountRow(_ account: LinkedPaymentAccount) -> some View {
         HStack(spacing: 16) {
+            // Preference number badge
+            if let order = account.preferenceOrder {
+                ZStack {
+                    Circle()
+                        .fill(Color.blue.opacity(0.15))
+                        .frame(width: 28, height: 28)
+                    Text("\(order)")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.blue)
+                }
+            }
+
             // Provider icon
             ZStack {
                 Circle()
@@ -99,7 +133,9 @@ struct PaymentMethodsView: View {
         .padding(.vertical, 8)
         .contentShape(Rectangle())
         .onTapGesture {
-            setAsDefault(account.provider)
+            if editMode == .inactive {
+                setAsDefault(account.provider)
+            }
         }
     }
 
@@ -328,14 +364,24 @@ struct PaymentMethodsView: View {
             return
         }
 
+        // Determine preference order (next in sequence)
+        let preferenceOrder: Int
+        if let profile = profileManager.currentProfile {
+            let maxOrder = profile.linkedPaymentAccounts.compactMap { $0.preferenceOrder }.max() ?? 0
+            preferenceOrder = maxOrder + 1
+        } else {
+            preferenceOrder = 1
+        }
+
         // Create linked account
-        let account = LinkedPaymentAccount(
+        var account = LinkedPaymentAccount(
             provider: provider,
             accountIdentifier: accountIdentifier,
             displayName: accountDisplayName.isEmpty ? nil : accountDisplayName,
             isVerified: true, // In production, you'd verify this
             linkedAt: Date()
         )
+        account.preferenceOrder = preferenceOrder
 
         // Add to profile
         Task {
@@ -372,9 +418,46 @@ struct PaymentMethodsView: View {
         }
     }
 
+    private func moveAccount(from source: IndexSet, to destination: Int) {
+        guard var profile = profileManager.currentProfile else { return }
+
+        // Get sorted accounts
+        var accounts = sortedLinkedAccounts
+        accounts.move(fromOffsets: source, toOffset: destination)
+
+        // Update preference order based on new position
+        for (index, account) in accounts.enumerated() {
+            if let originalIndex = profile.linkedPaymentAccounts.firstIndex(where: { $0.id == account.id }) {
+                profile.linkedPaymentAccounts[originalIndex].preferenceOrder = index + 1
+            }
+        }
+
+        profileManager.updateProfile(profile)
+    }
+
     private func deleteAccount(at offsets: IndexSet) {
         guard var profile = profileManager.currentProfile else { return }
-        profile.linkedPaymentAccounts.remove(atOffsets: offsets)
+
+        // Get accounts to delete from sorted list
+        let accountsToDelete = offsets.map { sortedLinkedAccounts[$0] }
+
+        // Remove from profile
+        profile.linkedPaymentAccounts.removeAll { account in
+            accountsToDelete.contains(where: { $0.id == account.id })
+        }
+
+        // Reorder remaining accounts
+        let remainingAccounts = profile.linkedPaymentAccounts.sorted { a, b in
+            let orderA = a.preferenceOrder ?? 999
+            let orderB = b.preferenceOrder ?? 999
+            return orderA < orderB
+        }
+
+        for (index, account) in remainingAccounts.enumerated() {
+            if let originalIndex = profile.linkedPaymentAccounts.firstIndex(where: { $0.id == account.id }) {
+                profile.linkedPaymentAccounts[originalIndex].preferenceOrder = index + 1
+            }
+        }
 
         // Clear default if it was deleted
         if let defaultProvider = profile.defaultPaymentProvider,
@@ -383,6 +466,11 @@ struct PaymentMethodsView: View {
         }
 
         profileManager.updateProfile(profile)
+    }
+
+    private var hasLinkedAccounts: Bool {
+        guard let profile = profileManager.currentProfile else { return false }
+        return !profile.linkedPaymentAccounts.isEmpty
     }
 
     private func setAsDefault(_ provider: PaymentProvider) {

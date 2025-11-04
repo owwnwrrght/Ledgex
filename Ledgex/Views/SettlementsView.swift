@@ -95,6 +95,8 @@ struct SettlementRow: View {
     @State private var selectedProvider: PaymentProvider?
     @State private var isProcessingPayment = false
     @State private var paymentError: String?
+    @State private var matchedPaymentMethods: [PaymentMatch] = []
+    @State private var isLoadingMatches = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -146,6 +148,9 @@ struct SettlementRow: View {
         .onTapGesture {
             if !settlement.isReceived && canInitiatePayment {
                 if hasLinkedAccounts {
+                    Task {
+                        await loadMatchedPaymentMethods()
+                    }
                     showingPaymentOptions = true
                 } else {
                     showingNoAccountsAlert = true
@@ -184,6 +189,9 @@ struct SettlementRow: View {
         } else if !settlement.isReceived {
             if canInitiatePayment && hasLinkedAccounts {
                 Button {
+                    Task {
+                        await loadMatchedPaymentMethods()
+                    }
                     showingPaymentOptions = true
                 } label: {
                     HStack(spacing: 6) {
@@ -222,24 +230,30 @@ struct SettlementRow: View {
 
     @ViewBuilder
     private var paymentOptionsDialog: some View {
-        // Quick pay with default provider
-        if let defaultProvider = profileManager.currentProfile?.defaultPaymentProvider,
-           paymentService.isProviderAvailable(defaultProvider),
-           let account = profileManager.currentProfile?.paymentAccount(for: defaultProvider) {
-            Button {
-                initiatePayment(with: defaultProvider, account: account)
-            } label: {
-                Label("Pay with \(defaultProvider.displayName)", systemImage: "bolt.fill")
+        // Show matched payment methods first (common between both users)
+        if !matchedPaymentMethods.isEmpty {
+            ForEach(matchedPaymentMethods) { match in
+                if paymentService.isProviderAvailable(match.provider) {
+                    Button {
+                        initiatePaymentWithMatch(match)
+                    } label: {
+                        if match == matchedPaymentMethods.first {
+                            Label("Pay \(match.recipientAccount.formattedIdentifier) via \(match.provider.displayName) ⭐", systemImage: "bolt.fill")
+                        } else {
+                            Text("Pay \(match.recipientAccount.formattedIdentifier) via \(match.provider.displayName)")
+                        }
+                    }
+                }
             }
-        }
-
-        // Other available providers
-        ForEach(availablePaymentProviders, id: \.self) { provider in
-            if let account = profileManager.currentProfile?.paymentAccount(for: provider) {
-                Button {
-                    initiatePayment(with: provider, account: account)
-                } label: {
-                    Text("Pay with \(provider.displayName)")
+        } else {
+            // Fallback: Show user's own payment methods (old behavior)
+            ForEach(availablePaymentProviders, id: \.self) { provider in
+                if let account = profileManager.currentProfile?.paymentAccount(for: provider) {
+                    Button {
+                        initiatePayment(with: provider, payerAccount: account, recipientAccount: nil)
+                    } label: {
+                        Text("Pay with \(provider.displayName)")
+                    }
                 }
             }
         }
@@ -288,7 +302,51 @@ struct SettlementRow: View {
 
     // MARK: - Payment Action
 
-    private func initiatePayment(with provider: PaymentProvider, account: LinkedPaymentAccount) {
+    /// Load matched payment methods between payer and recipient
+    private func loadMatchedPaymentMethods() async {
+        guard let profile = profileManager.currentProfile else { return }
+
+        isLoadingMatches = true
+        matchedPaymentMethods = await paymentService.findMatchedPaymentMethods(
+            payer: profile,
+            recipientFirebaseUID: settlement.to.firebaseUID
+        )
+        isLoadingMatches = false
+
+        if !matchedPaymentMethods.isEmpty {
+            print("✅ Found \(matchedPaymentMethods.count) matched payment methods")
+        } else {
+            print("⚠️ No common payment methods found")
+        }
+    }
+
+    /// Initiate payment with a matched payment method
+    private func initiatePaymentWithMatch(_ match: PaymentMatch) {
+        isProcessingPayment = true
+        paymentError = nil
+
+        Task {
+            let result = await paymentService.initiatePayment(
+                settlement: settlement,
+                provider: match.provider,
+                recipientAccount: match.recipientAccount
+            )
+
+            await MainActor.run {
+                isProcessingPayment = false
+
+                if result.success {
+                    // Auto-mark as received after successful payment initiation
+                    toggleReceived()
+                } else if let error = result.error {
+                    paymentError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// Initiate payment with a specific provider and accounts
+    private func initiatePayment(with provider: PaymentProvider, payerAccount: LinkedPaymentAccount, recipientAccount: LinkedPaymentAccount?) {
         isProcessingPayment = true
         paymentError = nil
 
@@ -296,7 +354,7 @@ struct SettlementRow: View {
             let result = await paymentService.initiatePayment(
                 settlement: settlement,
                 provider: provider,
-                recipientAccount: account
+                recipientAccount: recipientAccount
             )
 
             await MainActor.run {

@@ -1071,7 +1071,30 @@ class FirebaseManager: ObservableObject, TripDataStore {
         updatedProfile.firebaseUID = firebaseUID
         updatedProfile.lastSynced = Date()
 
-        let profileData: [String: Any] = [
+        // Serialize linked payment accounts
+        let paymentAccountsData = profile.linkedPaymentAccounts.map { account -> [String: Any] in
+            var data: [String: Any] = [
+                "id": account.id.uuidString,
+                "provider": account.provider.rawValue,
+                "accountIdentifier": account.accountIdentifier,
+                "isVerified": account.isVerified,
+                "linkedAt": Timestamp(date: account.linkedAt)
+            ]
+
+            if let displayName = account.displayName {
+                data["displayName"] = displayName
+            }
+            if let lastUsed = account.lastUsed {
+                data["lastUsed"] = Timestamp(date: lastUsed)
+            }
+            if let preferenceOrder = account.preferenceOrder {
+                data["preferenceOrder"] = preferenceOrder
+            }
+
+            return data
+        }
+
+        var profileData: [String: Any] = [
             "id": profile.id.uuidString,
             "firebaseUID": firebaseUID,
             "name": profile.name,
@@ -1080,8 +1103,13 @@ class FirebaseManager: ObservableObject, TripDataStore {
             "tripCodes": profile.tripCodes,
             "lastSynced": Timestamp(date: Date()),
             "pushToken": profile.pushToken as Any,
-            "notificationsEnabled": profile.notificationsEnabled
+            "notificationsEnabled": profile.notificationsEnabled,
+            "linkedPaymentAccounts": paymentAccountsData
         ]
+
+        if let defaultProvider = profile.defaultPaymentProvider {
+            profileData["defaultPaymentProvider"] = defaultProvider.rawValue
+        }
 
         do {
             let docRef = db.collection("users").document(firebaseUID)
@@ -1133,10 +1161,121 @@ class FirebaseManager: ObservableObject, TripDataStore {
             profile.pushToken = pushToken
             profile.notificationsEnabled = notificationsEnabled
 
+            // Parse linked payment accounts
+            if let accountsData = data["linkedPaymentAccounts"] as? [[String: Any]] {
+                profile.linkedPaymentAccounts = accountsData.compactMap { accountDict in
+                    guard let providerRaw = accountDict["provider"] as? String,
+                          let provider = PaymentProvider(rawValue: providerRaw),
+                          let accountIdentifier = accountDict["accountIdentifier"] as? String,
+                          let isVerified = accountDict["isVerified"] as? Bool,
+                          let linkedAtTimestamp = accountDict["linkedAt"] as? Timestamp else {
+                        return nil
+                    }
+
+                    let id = UUID(uuidString: accountDict["id"] as? String ?? "") ?? UUID()
+                    let displayName = accountDict["displayName"] as? String
+                    let linkedAt = linkedAtTimestamp.dateValue()
+                    let lastUsed = (accountDict["lastUsed"] as? Timestamp)?.dateValue()
+                    let preferenceOrder = accountDict["preferenceOrder"] as? Int
+
+                    return LinkedPaymentAccount(
+                        id: id,
+                        provider: provider,
+                        accountIdentifier: accountIdentifier,
+                        displayName: displayName,
+                        isVerified: isVerified,
+                        linkedAt: linkedAt,
+                        lastUsed: lastUsed,
+                        preferenceOrder: preferenceOrder
+                    )
+                }
+            }
+
+            // Parse default payment provider
+            if let defaultProviderRaw = data["defaultPaymentProvider"] as? String {
+                profile.defaultPaymentProvider = PaymentProvider(rawValue: defaultProviderRaw)
+            }
+
             print("✅ User profile fetched from Firestore")
             return profile
         } catch {
             print("❌ Failed to fetch user profile: \(error)")
+            throw error
+        }
+    }
+
+    /// Fetch any user's profile by their firebaseUID (including payment accounts)
+    @MainActor func fetchUserProfile(byFirebaseUID firebaseUID: String) async throws -> UserProfile? {
+        guard isFirebaseAvailable else {
+            print("⚠️ Cannot fetch user profile - Firebase not available")
+            return nil
+        }
+
+        do {
+            guard let document = try await userDocumentSnapshot(for: firebaseUID),
+                  let data = document.data() else {
+                print("⚠️ No user profile found for UID: \(firebaseUID)")
+                return nil
+            }
+
+            let id = UUID(uuidString: data["id"] as? String ?? "") ?? UUID()
+            let name = data["name"] as? String ?? "Ledgex Member"
+            let dateCreated = (data["dateCreated"] as? Timestamp)?.dateValue() ?? Date()
+            let currencyRaw = data["preferredCurrency"] as? String ?? "USD"
+            let preferredCurrency = Currency(rawValue: currencyRaw) ?? .USD
+            let tripCodes = data["tripCodes"] as? [String] ?? []
+            let lastSynced = (data["lastSynced"] as? Timestamp)?.dateValue()
+            let pushToken = data["pushToken"] as? String
+            let notificationsEnabled = data["notificationsEnabled"] as? Bool ?? true
+
+            var profile = UserProfile(name: name, firebaseUID: firebaseUID)
+            profile.id = id
+            profile.dateCreated = dateCreated
+            profile.preferredCurrency = preferredCurrency
+            profile.tripCodes = tripCodes
+            profile.lastSynced = lastSynced
+            profile.pushToken = pushToken
+            profile.notificationsEnabled = notificationsEnabled
+
+            // Parse linked payment accounts
+            if let accountsData = data["linkedPaymentAccounts"] as? [[String: Any]] {
+                profile.linkedPaymentAccounts = accountsData.compactMap { accountDict in
+                    guard let providerRaw = accountDict["provider"] as? String,
+                          let provider = PaymentProvider(rawValue: providerRaw),
+                          let accountIdentifier = accountDict["accountIdentifier"] as? String,
+                          let isVerified = accountDict["isVerified"] as? Bool,
+                          let linkedAtTimestamp = accountDict["linkedAt"] as? Timestamp else {
+                        return nil
+                    }
+
+                    let id = UUID(uuidString: accountDict["id"] as? String ?? "") ?? UUID()
+                    let displayName = accountDict["displayName"] as? String
+                    let linkedAt = linkedAtTimestamp.dateValue()
+                    let lastUsed = (accountDict["lastUsed"] as? Timestamp)?.dateValue()
+                    let preferenceOrder = accountDict["preferenceOrder"] as? Int
+
+                    return LinkedPaymentAccount(
+                        id: id,
+                        provider: provider,
+                        accountIdentifier: accountIdentifier,
+                        displayName: displayName,
+                        isVerified: isVerified,
+                        linkedAt: linkedAt,
+                        lastUsed: lastUsed,
+                        preferenceOrder: preferenceOrder
+                    )
+                }
+            }
+
+            // Parse default payment provider
+            if let defaultProviderRaw = data["defaultPaymentProvider"] as? String {
+                profile.defaultPaymentProvider = PaymentProvider(rawValue: defaultProviderRaw)
+            }
+
+            print("✅ User profile fetched for UID: \(firebaseUID)")
+            return profile
+        } catch {
+            print("❌ Failed to fetch user profile for UID \(firebaseUID): \(error)")
             throw error
         }
     }
