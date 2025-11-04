@@ -14,6 +14,7 @@ class NotificationService: NSObject, ObservableObject {
     @MainActor @Published var fcmToken: String?
 
     override init() {
+        FirebaseBootstrapper.configureIfNeeded()
         super.init()
         setupMessaging()
     }

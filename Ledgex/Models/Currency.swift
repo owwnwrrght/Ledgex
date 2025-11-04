@@ -110,17 +110,28 @@ struct CurrencyAmount {
         let formatter = NumberFormatter()
         formatter.numberStyle = .currency
         formatter.currencyCode = currency.rawValue
-        formatter.minimumFractionDigits = 0
+        formatter.minimumFractionDigits = 2
         formatter.maximumFractionDigits = 2
         
         // For currencies that don't use decimals (like JPY)
         switch currency {
         case .JPY, .KRW, .IDR, .CLP, .HUF:
+            formatter.minimumFractionDigits = 0
             formatter.maximumFractionDigits = 0
         default:
             break
         }
         
-        return formatter.string(from: NSDecimalNumber(decimal: amount)) ?? "\(currency.symbol)\(amount)"
+        if let formattedAmount = formatter.string(from: NSDecimalNumber(decimal: amount)) {
+            return formattedAmount
+        }
+        
+        // Fallback to manual formatting if NumberFormatter fails for any reason
+        let fallbackAmount = NSDecimalNumber(decimal: amount).doubleValue
+        if formatter.maximumFractionDigits == 0 {
+            return "\(currency.symbol)\(Int(fallbackAmount))"
+        } else {
+            return String(format: "%@%.2f", currency.symbol, fallbackAmount)
+        }
     }
 }

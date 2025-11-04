@@ -74,6 +74,7 @@ class FirebaseManager: ObservableObject, TripDataStore {
     private var documentRefs: [String: DocumentReference] = [:]
     
     init() {
+        FirebaseBootstrapper.configureIfNeeded()
         // Initialize Firebase authentication and check availability
         Task { @MainActor in
             await checkFirebaseStatus()

@@ -5,27 +5,34 @@ import FirebaseMessaging
 import UserNotifications
 import GoogleSignIn
 
+enum FirebaseBootstrapper {
+    static func configureIfNeeded() {
+        guard FirebaseApp.app() == nil else { return }
+
+        guard Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil else {
+            fatalError("GoogleService-Info.plist not found in app bundle. Please add it to your Xcode project.")
+        }
+
+        FirebaseApp.configure()
+        print("FirebaseBootstrapper: Firebase configured successfully")
+    }
+}
+
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey : Any]? = nil) -> Bool {
-        // Configure Firebase (GoogleService-Info.plist must be in bundle)
-        if Bundle.main.path(forResource: "GoogleService-Info", ofType: "plist") != nil {
-            print("Found GoogleService-Info.plist")
-            FirebaseApp.configure()
-            
-            
-            // Pre-warm Firebase to avoid PAC proxy delays
-            Firestore.firestore().collection("ping").document("ping").getDocument { _, _ in
-                print("Firebase pre-warm completed")
-            }
+        // Ensure Firebase is configured before any SDK usage
+        FirebaseBootstrapper.configureIfNeeded()
 
-            Task { @MainActor in
-                Messaging.messaging().isAutoInitEnabled = true
-                _ = NotificationService.shared
-                await NotificationService.shared.checkPermissionStatus()
-            }
-        } else {
-            fatalError("GoogleService-Info.plist not found in app bundle. Please add it to your Xcode project.")
+        // Pre-warm Firebase to avoid PAC proxy delays
+        Firestore.firestore().collection("ping").document("ping").getDocument { _, _ in
+            print("Firebase pre-warm completed")
+        }
+
+        Task { @MainActor in
+            Messaging.messaging().isAutoInitEnabled = true
+            _ = NotificationService.shared
+            await NotificationService.shared.checkPermissionStatus()
         }
         return true
     }
@@ -53,9 +60,12 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 struct LedgexApp: App {
     // register app delegate for Firebase setup
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
-    @StateObject private var authViewModel = AuthViewModel()
+    @StateObject private var authViewModel: AuthViewModel
 
     init() {
+        FirebaseBootstrapper.configureIfNeeded()
+        _authViewModel = StateObject(wrappedValue: AuthViewModel())
+
         // Verify URL scheme configuration at startup
         if let urlTypes = Bundle.main.infoDictionary?["CFBundleURLTypes"] as? [[String: Any]] {
             print("📋 Registered URL Schemes:")

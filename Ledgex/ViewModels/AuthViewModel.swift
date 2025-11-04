@@ -63,6 +63,7 @@ final class AuthViewModel: NSObject, ObservableObject, ASAuthorizationController
     private var cachedPresentationAnchor: ASPresentationAnchor?
     
     override init() {
+        FirebaseBootstrapper.configureIfNeeded()
         let user = Auth.auth().currentUser
         self.isSignedIn = user != nil
         super.init()
