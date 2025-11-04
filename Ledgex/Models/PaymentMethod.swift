@@ -93,6 +93,7 @@ struct LinkedPaymentAccount: Identifiable, Codable {
     var isVerified: Bool
     var linkedAt: Date
     var lastUsed: Date?
+    var preferenceOrder: Int? // Lower number = higher preference (1 is most preferred)
 
     var formattedIdentifier: String {
         switch provider {
