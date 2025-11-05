@@ -61,21 +61,47 @@ struct ProfileView: View {
     @State private var preferredCurrency: Currency = .USD
     @State private var notificationsEnabled = true
     @State private var showingDeleteConfirmation = false
+    @State private var venmoUsername = ""
     
     var body: some View {
         NavigationView {
             Form {
-                Section(header: Text("Profile Information")) {
+                Section {
                     TextField("Your name", text: $name)
-                    
+
                     Picker("Preferred Currency", selection: $preferredCurrency) {
                         ForEach(Currency.allCases, id: \.self) { currency in
                             Text(currency.displayName).tag(currency)
                         }
                     }
+                } header: {
+                    Text("Profile Information")
                 }
-                
-                Section(header: Text("Notifications")) {
+
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack(spacing: 4) {
+                            Text("@")
+                                .foregroundColor(.secondary)
+                                .font(.body)
+                            TextField("venmo-username", text: $venmoUsername)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                                .keyboardType(.alphabet)
+                        }
+                        .padding(.vertical, 4)
+
+                        Text("Enter your Venmo username (without the @)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } header: {
+                    Text("Payment Settings")
+                } footer: {
+                    Text("This allows others to pay you directly via Venmo. Both you and the payer must have Venmo usernames linked to use instant payments.")
+                }
+
+                Section {
                     Toggle("Enable Notifications", isOn: $notificationsEnabled)
                         .onChange(of: notificationsEnabled) { newValue in
                             profileManager.setNotificationsEnabled(newValue)
@@ -95,14 +121,11 @@ struct ProfileView: View {
                                 .font(.caption)
                         }
                     }
+                } header: {
+                    Text("Notifications")
                 }
-                
-                
-                Section(footer: Text("This name will be automatically added to groups you create or join.")) {
-                    EmptyView()
-                }
-                
-                Section(header: Text("Account")) {
+
+                Section {
                     if authViewModel.isProcessing {
                         ProgressView("Working…")
                             .progressViewStyle(CircularProgressViewStyle())
@@ -125,6 +148,8 @@ struct ProfileView: View {
                         showingDeleteConfirmation = true
                     }
                     .disabled(authViewModel.isProcessing)
+                } header: {
+                    Text("Account")
                 }
             }
             .navigationTitle("My Profile")
@@ -137,7 +162,13 @@ struct ProfileView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button("Save") {
-                        profileManager.updateProfile(name: name.trimmingCharacters(in: .whitespacesAndNewlines), preferredCurrency: preferredCurrency)
+                        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+                        let trimmedVenmo = venmoUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+                        profileManager.updateProfile(
+                            name: trimmedName,
+                            preferredCurrency: preferredCurrency,
+                            venmoUsername: trimmedVenmo.isEmpty ? nil : trimmedVenmo
+                        )
                         dismiss()
                     }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -149,6 +180,7 @@ struct ProfileView: View {
                 name = profile.name
                 preferredCurrency = profile.preferredCurrency
                 notificationsEnabled = profile.notificationsEnabled
+                venmoUsername = profile.venmoUsername ?? ""
             }
         }
         .alert("Delete Account?", isPresented: $showingDeleteConfirmation) {

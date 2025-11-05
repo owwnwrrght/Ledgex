@@ -86,9 +86,6 @@
 	<key>LSApplicationQueriesSchemes</key>
 	<array>
 		<string>venmo</string>
-		<string>cashapp</string>
-		<string>zelle</string>
-		<string>paypal</string>
 	</array>
 </dict>
 </plist>

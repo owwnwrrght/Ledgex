@@ -1071,29 +1071,6 @@ class FirebaseManager: ObservableObject, TripDataStore {
         updatedProfile.firebaseUID = firebaseUID
         updatedProfile.lastSynced = Date()
 
-        // Serialize linked payment accounts
-        let paymentAccountsData = profile.linkedPaymentAccounts.map { account -> [String: Any] in
-            var data: [String: Any] = [
-                "id": account.id.uuidString,
-                "provider": account.provider.rawValue,
-                "accountIdentifier": account.accountIdentifier,
-                "isVerified": account.isVerified,
-                "linkedAt": Timestamp(date: account.linkedAt)
-            ]
-
-            if let displayName = account.displayName {
-                data["displayName"] = displayName
-            }
-            if let lastUsed = account.lastUsed {
-                data["lastUsed"] = Timestamp(date: lastUsed)
-            }
-            if let preferenceOrder = account.preferenceOrder {
-                data["preferenceOrder"] = preferenceOrder
-            }
-
-            return data
-        }
-
         var profileData: [String: Any] = [
             "id": profile.id.uuidString,
             "firebaseUID": firebaseUID,
@@ -1103,12 +1080,11 @@ class FirebaseManager: ObservableObject, TripDataStore {
             "tripCodes": profile.tripCodes,
             "lastSynced": Timestamp(date: Date()),
             "pushToken": profile.pushToken as Any,
-            "notificationsEnabled": profile.notificationsEnabled,
-            "linkedPaymentAccounts": paymentAccountsData
+            "notificationsEnabled": profile.notificationsEnabled
         ]
 
-        if let defaultProvider = profile.defaultPaymentProvider {
-            profileData["defaultPaymentProvider"] = defaultProvider.rawValue
+        if let venmoUsername = profile.venmoUsername {
+            profileData["venmoUsername"] = venmoUsername
         }
 
         do {
@@ -1120,6 +1096,44 @@ class FirebaseManager: ObservableObject, TripDataStore {
             ProfileManager.shared.updateProfileWithFirebaseUID(firebaseUID)
         } catch {
             print("❌ Failed to save user profile: \(error)")
+            throw error
+        }
+    }
+
+    @MainActor func savePaymentTransaction(_ transaction: PaymentTransaction) async throws {
+        guard isFirebaseAvailable else {
+            throw FirebaseManagerError.notAvailable
+        }
+
+        var transactionData: [String: Any] = [
+            "id": transaction.id.uuidString,
+            "settlementId": transaction.settlementId.uuidString,
+            "provider": transaction.provider.rawValue,
+            "status": transaction.status.rawValue,
+            "amount": NSDecimalNumber(decimal: transaction.amount).doubleValue,
+            "currency": transaction.currency.rawValue,
+            "fromUserId": transaction.fromUserId.uuidString,
+            "toUserId": transaction.toUserId.uuidString,
+            "createdAt": Timestamp(date: transaction.createdAt),
+            "updatedAt": Timestamp(date: transaction.updatedAt)
+        ]
+
+        if let externalId = transaction.externalTransactionId {
+            transactionData["externalTransactionId"] = externalId
+        }
+        if let errorMessage = transaction.errorMessage {
+            transactionData["errorMessage"] = errorMessage
+        }
+        if let completedAt = transaction.completedAt {
+            transactionData["completedAt"] = Timestamp(date: completedAt)
+        }
+
+        do {
+            let docRef = db.collection("paymentTransactions").document(transaction.id.uuidString)
+            try await docRef.setData(transactionData)
+            print("✅ Payment transaction saved to Firestore: \(transaction.id.uuidString)")
+        } catch {
+            print("❌ Failed to save payment transaction: \(error)")
             throw error
         }
     }
@@ -1161,40 +1175,8 @@ class FirebaseManager: ObservableObject, TripDataStore {
             profile.pushToken = pushToken
             profile.notificationsEnabled = notificationsEnabled
 
-            // Parse linked payment accounts
-            if let accountsData = data["linkedPaymentAccounts"] as? [[String: Any]] {
-                profile.linkedPaymentAccounts = accountsData.compactMap { accountDict in
-                    guard let providerRaw = accountDict["provider"] as? String,
-                          let provider = PaymentProvider(rawValue: providerRaw),
-                          let accountIdentifier = accountDict["accountIdentifier"] as? String,
-                          let isVerified = accountDict["isVerified"] as? Bool,
-                          let linkedAtTimestamp = accountDict["linkedAt"] as? Timestamp else {
-                        return nil
-                    }
-
-                    let id = UUID(uuidString: accountDict["id"] as? String ?? "") ?? UUID()
-                    let displayName = accountDict["displayName"] as? String
-                    let linkedAt = linkedAtTimestamp.dateValue()
-                    let lastUsed = (accountDict["lastUsed"] as? Timestamp)?.dateValue()
-                    let preferenceOrder = accountDict["preferenceOrder"] as? Int
-
-                    return LinkedPaymentAccount(
-                        id: id,
-                        provider: provider,
-                        accountIdentifier: accountIdentifier,
-                        displayName: displayName,
-                        isVerified: isVerified,
-                        linkedAt: linkedAt,
-                        lastUsed: lastUsed,
-                        preferenceOrder: preferenceOrder
-                    )
-                }
-            }
-
-            // Parse default payment provider
-            if let defaultProviderRaw = data["defaultPaymentProvider"] as? String {
-                profile.defaultPaymentProvider = PaymentProvider(rawValue: defaultProviderRaw)
-            }
+            // Parse Venmo username
+            profile.venmoUsername = data["venmoUsername"] as? String
 
             print("✅ User profile fetched from Firestore")
             return profile
@@ -1237,40 +1219,8 @@ class FirebaseManager: ObservableObject, TripDataStore {
             profile.pushToken = pushToken
             profile.notificationsEnabled = notificationsEnabled
 
-            // Parse linked payment accounts
-            if let accountsData = data["linkedPaymentAccounts"] as? [[String: Any]] {
-                profile.linkedPaymentAccounts = accountsData.compactMap { accountDict in
-                    guard let providerRaw = accountDict["provider"] as? String,
-                          let provider = PaymentProvider(rawValue: providerRaw),
-                          let accountIdentifier = accountDict["accountIdentifier"] as? String,
-                          let isVerified = accountDict["isVerified"] as? Bool,
-                          let linkedAtTimestamp = accountDict["linkedAt"] as? Timestamp else {
-                        return nil
-                    }
-
-                    let id = UUID(uuidString: accountDict["id"] as? String ?? "") ?? UUID()
-                    let displayName = accountDict["displayName"] as? String
-                    let linkedAt = linkedAtTimestamp.dateValue()
-                    let lastUsed = (accountDict["lastUsed"] as? Timestamp)?.dateValue()
-                    let preferenceOrder = accountDict["preferenceOrder"] as? Int
-
-                    return LinkedPaymentAccount(
-                        id: id,
-                        provider: provider,
-                        accountIdentifier: accountIdentifier,
-                        displayName: displayName,
-                        isVerified: isVerified,
-                        linkedAt: linkedAt,
-                        lastUsed: lastUsed,
-                        preferenceOrder: preferenceOrder
-                    )
-                }
-            }
-
-            // Parse default payment provider
-            if let defaultProviderRaw = data["defaultPaymentProvider"] as? String {
-                profile.defaultPaymentProvider = PaymentProvider(rawValue: defaultProviderRaw)
-            }
+            // Parse Venmo username
+            profile.venmoUsername = data["venmoUsername"] as? String
 
             print("✅ User profile fetched for UID: \(firebaseUID)")
             return profile
@@ -1287,22 +1237,48 @@ class FirebaseManager: ObservableObject, TripDataStore {
         }
 
         do {
-            guard let userDoc = try await userDocumentSnapshot(for: firebaseUID),
-                  let userData = userDoc.data(),
-                  let tripCodes = userData["tripCodes"] as? [String], !tripCodes.isEmpty else {
-                print("ℹ️ User has no trips")
-                return []
-            }
-
-            // Fetch all trips the user is part of
             var trips: [Trip] = []
-            for code in tripCodes {
-                if let trip = try await fetchTrip(by: code) {
-                    trips.append(trip)
+
+            // First, try to fetch trips using the user's tripCodes array
+            if let userDoc = try await userDocumentSnapshot(for: firebaseUID),
+               let userData = userDoc.data(),
+               let tripCodes = userData["tripCodes"] as? [String], !tripCodes.isEmpty {
+
+                print("📋 Found \(tripCodes.count) trip codes in user profile")
+
+                for code in tripCodes {
+                    if let trip = try await fetchTrip(by: code) {
+                        trips.append(trip)
+                    }
+                }
+
+                if !trips.isEmpty {
+                    print("✅ Fetched \(trips.count) trips from user profile trip codes")
+                    return trips
                 }
             }
 
-            print("✅ Fetched \(trips.count) trips for user")
+            // Fallback: Query trips collection directly where user is a member
+            print("🔍 Fallback: Searching trips collection for user's Firebase UID...")
+            let snapshot = try await db.collection("trips")
+                .whereField("peopleIDs", arrayContains: firebaseUID)
+                .getDocuments()
+
+            print("🔍 Found \(snapshot.documents.count) trips in database where user is a member")
+
+            for document in snapshot.documents {
+                do {
+                    let trip = try tripFromDocument(document)
+                    trips.append(trip)
+
+                    // Update user profile with this trip code to fix sync
+                    try? await addTripToUserProfile(tripCode: trip.code)
+                } catch {
+                    print("⚠️ Failed to parse trip document \(document.documentID): \(error)")
+                }
+            }
+
+            print("✅ Fetched \(trips.count) trips for user (using fallback query)")
             return trips
         } catch {
             print("❌ Failed to fetch user trips: \(error)")

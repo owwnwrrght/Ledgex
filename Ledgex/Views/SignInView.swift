@@ -4,64 +4,81 @@ import SwiftUI
 struct SignInView: View {
     @EnvironmentObject private var authViewModel: AuthViewModel
     @State private var showDebugLog = false
-    
+
     var body: some View {
-        VStack(spacing: 32) {
+        VStack(spacing: 0) {
             Spacer()
-            VStack(spacing: 12) {
-                Image(systemName: "person.3.sequence")
-                    .font(.system(size: 72, weight: .regular))
-                    .foregroundStyle(LinearGradient.ledgexAccentBorder)
-                Text("Sign in to Ledgex")
-                    .font(.title)
-                    .fontWeight(.bold)
-                Text("Use Sign in with Apple or Google for the fastest setup, or opt for email instead.")
-                    .font(.body)
+
+            // Header Section
+            VStack(spacing: 16) {
+                Image(systemName: "banknote.fill")
+                    .font(.system(size: 56, weight: .medium))
+                    .foregroundColor(Color(red: 0.2, green: 0.3, blue: 0.5))
+
+                Text("Ledgex")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundColor(.primary)
+
+                Text("Simplify your group expenses")
+                    .font(.system(size: 15))
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
-                    .padding(.horizontal)
             }
+            .padding(.bottom, 48)
 
+            // Sign In Buttons Section
             VStack(spacing: 16) {
                 if authViewModel.currentFlow == .signInWithApple {
-                    SignInWithAppleButton(.signIn) { request in
-                        print("🔐 [SignInView] Sign in with Apple button tapped")
-                        authViewModel.prepareSignInRequest(request)
-                    } onCompletion: { result in
-                        print("🔐 [SignInView] Sign in completion called")
-                        authViewModel.handleSignInCompletion(result)
+                    // Social Sign In Buttons
+                    VStack(spacing: 12) {
+                        appleSignInButton
+                        googleSignInButton
                     }
-                    .signInWithAppleButtonStyle(.black)
-                    .frame(height: 52)
-                    .cornerRadius(12)
-                    .disabled(authViewModel.isProcessing)
-                    .padding(.horizontal)
+                    .padding(.horizontal, 32)
 
-                    googleSignInButton
-                        .disabled(authViewModel.isProcessing)
+                    // Divider
+                    HStack {
+                        Rectangle()
+                            .fill(Color(.separator))
+                            .frame(height: 0.5)
+                        Text("or")
+                            .font(.system(size: 13))
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 12)
+                        Rectangle()
+                            .fill(Color(.separator))
+                            .frame(height: 0.5)
+                    }
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 8)
 
+                    // Email Option Button
                     Button(action: authViewModel.switchToEmailFlow) {
-                        Text("Prefer email and password?")
-                            .font(.caption)
-                            .underline()
+                        Text("Continue with Email")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundColor(Color(red: 0.2, green: 0.3, blue: 0.5))
                     }
                     .padding(.top, 4)
                 } else {
                     emailSignInForm
                 }
 
+                // Processing Indicator
                 if authViewModel.isProcessing {
-                    ProgressView("Working…")
+                    ProgressView()
                         .progressViewStyle(CircularProgressViewStyle())
+                        .padding(.top, 16)
                 }
 
+                // Error Message
                 if let message = authViewModel.errorMessage {
                     VStack(spacing: 8) {
                         Text(message)
-                            .font(.footnote)
+                            .font(.system(size: 13))
                             .foregroundColor(.red)
                             .multilineTextAlignment(.center)
-                            .padding(.horizontal)
+                            .padding(.horizontal, 32)
+                            .padding(.top, 16)
 
                         if !authViewModel.detailedErrorLog.isEmpty {
                             Button(action: { showDebugLog.toggle() }) {
@@ -77,6 +94,7 @@ struct SignInView: View {
                     }
                 }
 
+                // Debug Log
                 if showDebugLog && !authViewModel.detailedErrorLog.isEmpty {
                     VStack(spacing: 8) {
                         HStack {
@@ -96,7 +114,7 @@ struct SignInView: View {
                             .buttonStyle(.bordered)
                             .controlSize(.mini)
                         }
-                        .padding(.horizontal)
+                        .padding(.horizontal, 32)
 
                         ScrollView {
                             VStack(alignment: .leading, spacing: 4) {
@@ -110,16 +128,16 @@ struct SignInView: View {
                             .padding(8)
                             .background(Color(.secondarySystemBackground).opacity(0.85))
                             .cornerRadius(8)
-                            .ledgexOutlined(cornerRadius: 8)
                         }
                         .frame(maxHeight: 200)
-                        .padding(.horizontal)
+                        .padding(.horizontal, 32)
                     }
                 }
             }
+
+            Spacer()
             Spacer()
         }
-        .padding()
         .background(
             WindowAccessor { window in
                 authViewModel.updatePresentationAnchor(window)
@@ -129,79 +147,102 @@ struct SignInView: View {
         .ledgexBackground()
     }
 
+    // MARK: - Apple Sign In Button
+    private var appleSignInButton: some View {
+        SignInWithAppleButton(.signIn) { request in
+            print("🔐 [SignInView] Sign in with Apple button tapped")
+            authViewModel.prepareSignInRequest(request)
+        } onCompletion: { result in
+            print("🔐 [SignInView] Sign in completion called")
+            authViewModel.handleSignInCompletion(result)
+        }
+        .signInWithAppleButtonStyle(.black)
+        .frame(height: 52)
+        .cornerRadius(8)
+        .disabled(authViewModel.isProcessing)
+    }
+
+    // MARK: - Google Sign In Button
     private var googleSignInButton: some View {
         Button(action: authViewModel.signInWithGoogle) {
             HStack(spacing: 12) {
-                ZStack {
-                    Circle()
-                        .fill(Color.white)
-                        .frame(width: 24, height: 24)
-                    Text("G")
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(.black)
-                }
-                Text("Sign in with Google")
-                    .font(.headline)
-                    .foregroundColor(.primary)
-                Spacer()
+                Image(systemName: "g.circle.fill")
+                    .font(.system(size: 20))
+                    .foregroundColor(.white)
+
+                Text("Continue with Google")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundColor(.white)
             }
-            .padding()
-            .background(Color(.systemBackground))
-            .cornerRadius(12)
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(Color(.systemGray4), lineWidth: 1)
-            )
+            .frame(maxWidth: .infinity)
+            .frame(height: 52)
+            .background(Color(red: 0.26, green: 0.52, blue: 0.96))
+            .cornerRadius(8)
         }
-        .padding(.horizontal)
+        .disabled(authViewModel.isProcessing)
         .accessibilityLabel("Sign in with Google")
     }
 
+    // MARK: - Email Sign In Form
     private var emailSignInForm: some View {
-        VStack(spacing: 12) {
-            TextField("Email", text: $authViewModel.email)
-                .textContentType(.emailAddress)
-                .keyboardType(.emailAddress)
-                .autocapitalization(.none)
-                .disableAutocorrection(true)
-                .padding()
-                .background(Color(.secondarySystemBackground).opacity(0.92))
-                .cornerRadius(12)
-                .ledgexOutlined(cornerRadius: 12)
+        VStack(spacing: 16) {
+            VStack(spacing: 12) {
+                TextField("Email", text: $authViewModel.email)
+                    .textContentType(.emailAddress)
+                    .keyboardType(.emailAddress)
+                    .autocapitalization(.none)
+                    .disableAutocorrection(true)
+                    .padding(16)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color(.separator), lineWidth: 0.5)
+                    )
 
-            SecureField("Password", text: $authViewModel.password)
-                .textContentType(.password)
-                .padding()
-                .background(Color(.secondarySystemBackground).opacity(0.92))
-                .cornerRadius(12)
-                .ledgexOutlined(cornerRadius: 12)
-
-            Button(action: authViewModel.signInWithEmail) {
-                Text("Sign In")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(LinearGradient.ledgexCallToAction)
-                    .cornerRadius(14)
-                    .shadow(color: Color.purple.opacity(0.18), radius: 8, x: 0, y: 6)
+                SecureField("Password", text: $authViewModel.password)
+                    .textContentType(.password)
+                    .padding(16)
+                    .background(Color(.systemGray6))
+                    .cornerRadius(8)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(Color(.separator), lineWidth: 0.5)
+                    )
             }
-            .disabled(authViewModel.isProcessing)
+            .padding(.horizontal, 32)
 
-            Button(action: authViewModel.signUpWithEmail) {
-                Text("Create a new account")
-                    .font(.subheadline)
-                    .foregroundColor(.blue)
-                    .padding(.vertical, 6)
+            VStack(spacing: 12) {
+                Button(action: authViewModel.signInWithEmail) {
+                    Text("Sign In")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 52)
+                        .background(Color(red: 0.2, green: 0.3, blue: 0.5))
+                        .cornerRadius(8)
+                }
+                .disabled(authViewModel.isProcessing)
+
+                Button(action: authViewModel.signUpWithEmail) {
+                    Text("Create Account")
+                        .font(.system(size: 15, weight: .medium))
+                        .foregroundColor(Color(red: 0.2, green: 0.3, blue: 0.5))
+                }
+                .disabled(authViewModel.isProcessing)
             }
-            .disabled(authViewModel.isProcessing)
+            .padding(.horizontal, 32)
 
             Button(action: { authViewModel.currentFlow = .signInWithApple }) {
-                Text("Back to Sign in with Apple")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.top, 8)
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 12))
+                    Text("Back")
+                        .font(.system(size: 15))
+                }
+                .foregroundColor(.secondary)
             }
+            .padding(.top, 8)
         }
     }
 

@@ -7,6 +7,8 @@ struct TripListView: View {
     @State private var showingProfile = false
     @State private var joinTripCode = ""
     @State private var showingJoinError = false
+    @State private var tripToNavigate: TripNavigationTarget?
+    @State private var pendingNotification: PendingNotification?
     
     @ViewBuilder
     private var bottomBar: some View {
@@ -142,24 +144,154 @@ struct TripListView: View {
                 .padding(.vertical, 40)
             }
         }
-    }
-    
-    @ViewBuilder
-    private func syncStatusIndicator(for status: FirebaseManager.SyncStatus) -> some View {
-        switch status {
-        case .idle:
-            Image(systemName: "icloud")
-                .foregroundColor(.gray)
-        case .syncing:
-            ProgressView()
-                .scaleEffect(0.7)
-        case .success:
-            Image(systemName: "icloud.fill")
-                .foregroundColor(.green)
-        case .error(_):
-            Image(systemName: "exclamationmark.icloud")
-                .foregroundColor(.red)
+        .modifier(TripNavigationModifier(tripToNavigate: $tripToNavigate, viewModel: viewModel))
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenTripFromNotification"))) { notification in
+            guard let tripCode = notification.userInfo?["tripCode"] as? String else { return }
+            let destination = (notification.userInfo?["destinationTab"] as? String)
+                .flatMap(NotificationService.NotificationDestination.init(rawValue:))
+                ?? (notification.userInfo?["notificationType"] as? String)
+                    .flatMap(NotificationService.NotificationDestination.init(notificationType:))
+            handleNotificationNavigation(tripCode: tripCode, destination: destination)
         }
+        .onReceive(viewModel.$trips) { _ in
+            resolvePendingNotificationIfNeeded()
+        }
+    }
+}
+
+private extension TripListView {
+    struct TripNavigationTarget: Identifiable, Hashable {
+        let trip: Trip
+        let tab: TripDetailTab
+
+        var id: UUID { trip.id }
+
+        func hash(into hasher: inout Hasher) {
+            hasher.combine(id)
+            hasher.combine(tab)
+        }
+
+        static func == (lhs: TripNavigationTarget, rhs: TripNavigationTarget) -> Bool {
+            lhs.id == rhs.id && lhs.tab == rhs.tab
+        }
+    }
+
+    struct PendingNotification: Equatable {
+        let tripCode: String
+        let destination: NotificationService.NotificationDestination?
+    }
+
+    func handleNotificationNavigation(tripCode: String, destination: NotificationService.NotificationDestination?) {
+        guard let trip = viewModel.trips.first(where: { $0.code == tripCode }) else {
+            pendingNotification = PendingNotification(tripCode: tripCode, destination: destination)
+            return
+        }
+        tripToNavigate = TripNavigationTarget(trip: trip, tab: tab(for: destination))
+        pendingNotification = nil
+    }
+
+    func resolvePendingNotificationIfNeeded() {
+        guard let pending = pendingNotification else { return }
+        handleNotificationNavigation(tripCode: pending.tripCode, destination: pending.destination)
+    }
+
+    func tab(for destination: NotificationService.NotificationDestination?) -> TripDetailTab {
+        guard let destination,
+              let mapped = TripDetailTab(destination: destination) else {
+            return .people
+        }
+        return mapped
+    }
+}
+
+private struct TripNavigationModifier: ViewModifier {
+    @Binding var tripToNavigate: TripListView.TripNavigationTarget?
+    let viewModel: TripListViewModel
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17, *) {
+            content
+                .navigationDestination(item: $tripToNavigate) { target in
+                    TripDetailView(
+                        trip: target.trip,
+                        tripListViewModel: viewModel,
+                        initialTab: target.tab
+                    )
+                }
+        } else {
+            content
+                .background(
+                    NavigationLink(
+                        destination: destinationView(),
+                        isActive: isActiveBinding
+                    ) {
+                        EmptyView()
+                    }
+                    .hidden()
+                )
+        }
+    }
+
+    private var isActiveBinding: Binding<Bool> {
+        Binding(
+            get: { tripToNavigate != nil },
+            set: { isActive in
+                if !isActive {
+                    tripToNavigate = nil
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func destinationView() -> some View {
+        if let target = tripToNavigate {
+            TripDetailView(
+                trip: target.trip,
+                tripListViewModel: viewModel,
+                initialTab: target.tab
+            )
+        } else {
+            EmptyView()
+        }
+    }
+}
+
+private extension TripSplitView {
+    struct SplitViewPendingNotification: Equatable {
+        let tripCode: String
+        let destination: NotificationService.NotificationDestination?
+    }
+
+    func handleNotificationNavigation(tripCode: String, destination: NotificationService.NotificationDestination?) {
+        guard let trip = viewModel.trips.first(where: { $0.code == tripCode }) else {
+            pendingNotification = SplitViewPendingNotification(tripCode: tripCode, destination: destination)
+            return
+        }
+
+        detailInitialTab = tab(for: destination)
+
+        if selectedTripID != trip.id {
+            shouldResetDetailTabOnSelection = false
+            selectedTripID = trip.id
+        }
+
+        pendingNotification = nil
+    }
+
+    func resolvePendingNotificationIfNeeded(trips: [Trip]) {
+        guard let pending = pendingNotification else { return }
+        if trips.contains(where: { $0.code == pending.tripCode }) {
+            handleNotificationNavigation(tripCode: pending.tripCode, destination: pending.destination)
+        }
+    }
+
+    func tab(for destination: NotificationService.NotificationDestination?) -> TripDetailTab {
+        guard let destination,
+              let mapped = TripDetailTab(destination: destination) else {
+            return .people
+        }
+        return mapped
     }
 }
 
@@ -167,6 +299,9 @@ struct TripSplitView: View {
     @ObservedObject var viewModel: TripListViewModel
     @Binding var showingProfile: Bool
     @State private var selectedTripID: UUID?
+    @State private var detailInitialTab: TripDetailTab = .people
+    @State private var pendingNotification: SplitViewPendingNotification?
+    @State private var shouldResetDetailTabOnSelection = true
 
     var body: some View {
         NavigationSplitView {
@@ -178,10 +313,14 @@ struct TripSplitView: View {
         } detail: {
             if let tripID = selectedTripID,
                let trip = viewModel.trips.first(where: { $0.id == tripID }) {
-                TripDetailView(trip: trip, tripListViewModel: viewModel)
+                TripDetailView(trip: trip, tripListViewModel: viewModel, initialTab: detailInitialTab)
             } else if let firstTrip = viewModel.trips.first {
-                TripDetailView(trip: firstTrip, tripListViewModel: viewModel)
-                    .task { selectedTripID = firstTrip.id }
+                TripDetailView(trip: firstTrip, tripListViewModel: viewModel, initialTab: detailInitialTab)
+                    .task {
+                        if selectedTripID == nil {
+                            selectedTripID = firstTrip.id
+                        }
+                    }
             } else {
                 VStack(spacing: 16) {
                     Image(systemName: "person.3")
@@ -208,6 +347,20 @@ struct TripSplitView: View {
             } else if selectedTripID == nil {
                 selectedTripID = trips.first?.id
             }
+            resolvePendingNotificationIfNeeded(trips: trips)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenTripFromNotification"))) { notification in
+            guard let tripCode = notification.userInfo?["tripCode"] as? String else { return }
+            let destination = (notification.userInfo?["destinationTab"] as? String)
+                .flatMap(NotificationService.NotificationDestination.init(rawValue:))
+                ?? (notification.userInfo?["notificationType"] as? String)
+                    .flatMap(NotificationService.NotificationDestination.init(notificationType:))
+            handleNotificationNavigation(tripCode: tripCode, destination: destination)
+        }
+        .onChange(of: selectedTripID) { _ in
+            defer { shouldResetDetailTabOnSelection = true }
+            guard shouldResetDetailTabOnSelection else { return }
+            detailInitialTab = .people
         }
     }
 }

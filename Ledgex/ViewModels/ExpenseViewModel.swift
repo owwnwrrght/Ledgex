@@ -591,8 +591,11 @@ class ExpenseViewModel: ObservableObject {
         guard canToggleSettlementReceived(settlement) else { return }
         guard let index = trip.settlementReceipts.firstIndex(where: { $0.fromPersonId == settlement.from.id && $0.toPersonId == settlement.to.id }) else { return }
 
+        let wasReceived = trip.settlementReceipts[index].isReceived
         trip.settlementReceipts[index].isReceived.toggle()
         trip.settlementReceipts[index].updatedAt = Date()
+
+        let isNowReceived = trip.settlementReceipts[index].isReceived
 
         tripListViewModel?.updateTrip(trip)
         saveChanges()
@@ -601,8 +604,43 @@ class ExpenseViewModel: ObservableObject {
             let savedTrip = try await dataStore.saveTrip(trip)
             self.trip = savedTrip
             self.tripListViewModel?.updateTrip(savedTrip)
+
+            // Send notification when payment is marked as received
+            if !wasReceived && isNowReceived {
+                await sendPaymentReceivedNotification(settlement: settlement)
+            }
         } catch {
             print("Failed to update settlement receipt: \(error)")
+        }
+    }
+
+    private func sendPaymentReceivedNotification(settlement: Settlement) async {
+        // Notification should be sent to the payer (from person) that their payment was received
+        let amount = CurrencyAmount(amount: settlement.amount, currency: trip.baseCurrency).formatted()
+        let notification = NotificationService.NotificationType.paymentReceived(
+            tripName: trip.name,
+            payerName: settlement.from.name,
+            amount: amount
+        )
+
+        await MainActor.run {
+            NotificationService.shared.sendTripNotification(notification, tripCode: trip.code)
+        }
+    }
+
+    private func sendNewSettlementNotification(from payer: Person, to recipient: Person, amount: Decimal) async {
+        // Notify the recipient that they have a new settlement to receive
+        guard isCurrentUser(person: recipient) else { return }
+
+        let formattedAmount = CurrencyAmount(amount: amount, currency: trip.baseCurrency).formatted()
+        let notification = NotificationService.NotificationType.newSettlementCreated(
+            tripName: trip.name,
+            payerName: payer.name,
+            amount: formattedAmount
+        )
+
+        await MainActor.run {
+            NotificationService.shared.sendTripNotification(notification, tripCode: trip.code)
         }
     }
 
@@ -616,6 +654,7 @@ class ExpenseViewModel: ObservableObject {
     private func synchronizeSettlementReceipts(with settlements: [(from: Person, to: Person, amount: Decimal)]) -> [SettlementReceipt] {
         var existing = Dictionary(uniqueKeysWithValues: trip.settlementReceipts.map { (SettlementKey(fromPersonId: $0.fromPersonId, toPersonId: $0.toPersonId), $0) })
         var updated: [SettlementReceipt] = []
+        var newSettlements: [(from: Person, to: Person, amount: Decimal)] = []
 
         for entry in settlements {
             let key = SettlementKey(fromPersonId: entry.from.id, toPersonId: entry.to.id)
@@ -636,6 +675,15 @@ class ExpenseViewModel: ObservableObject {
                                                  isReceived: false,
                                                  updatedAt: Date())
                 updated.append(receipt)
+                // Track new settlements for notifications
+                newSettlements.append(entry)
+            }
+        }
+
+        // Send notifications for new settlements
+        Task { @MainActor in
+            for settlement in newSettlements {
+                await sendNewSettlementNotification(from: settlement.from, to: settlement.to, amount: settlement.amount)
             }
         }
 

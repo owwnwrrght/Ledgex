@@ -52,6 +52,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         if GIDSignIn.sharedInstance.handle(url) {
             return true
         }
+
         return false
     }
 }

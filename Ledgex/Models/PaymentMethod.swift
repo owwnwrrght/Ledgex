@@ -2,20 +2,12 @@ import Foundation
 
 // Payment provider types supported by the app
 enum PaymentProvider: String, Codable, CaseIterable {
-    case applePay = "Apple Pay Cash"
     case venmo = "Venmo"
-    case paypal = "PayPal"
-    case zelle = "Zelle"
-    case cashApp = "Cash App"
     case manual = "Manual Payment"
 
     var icon: String {
         switch self {
-        case .applePay: return "applePay"
         case .venmo: return "venmo"
-        case .paypal: return "paypal"
-        case .zelle: return "zelle"
-        case .cashApp: return "cashapp"
         case .manual: return "creditcard"
         }
     }
@@ -24,23 +16,10 @@ enum PaymentProvider: String, Codable, CaseIterable {
         return self.rawValue
     }
 
-    var urlScheme: String? {
-        switch self {
-        case .venmo: return "venmo://"
-        case .cashApp: return "cashapp://"
-        case .zelle: return "zelle://"
-        default: return nil
-        }
-    }
-
-    var isDeepLinkBased: Bool {
-        return urlScheme != nil
-    }
-
     var requiresSDK: Bool {
         switch self {
-        case .paypal, .applePay: return true
-        default: return false
+        case .venmo: return true
+        case .manual: return false
         }
     }
 }
@@ -97,21 +76,9 @@ struct LinkedPaymentAccount: Identifiable, Codable {
 
     var formattedIdentifier: String {
         switch provider {
-        case .venmo, .cashApp:
+        case .venmo:
             // Username format
             return accountIdentifier.hasPrefix("@") ? accountIdentifier : "@\(accountIdentifier)"
-        case .zelle, .paypal:
-            // Email or phone
-            if accountIdentifier.contains("@") {
-                let components = accountIdentifier.components(separatedBy: "@")
-                if components.count == 2 {
-                    let prefix = components[0].prefix(2)
-                    return "\(prefix)***@\(components[1])"
-                }
-            }
-            return accountIdentifier
-        case .applePay:
-            return "Apple Pay Cash"
         case .manual:
             return "Manual"
         }

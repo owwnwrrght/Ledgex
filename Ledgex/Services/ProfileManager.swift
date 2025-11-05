@@ -76,7 +76,7 @@ class ProfileManager: ObservableObject {
         }
     }
     
-    @MainActor func updateProfile(name: String? = nil, preferredCurrency: Currency? = nil) {
+    @MainActor func updateProfile(name: String? = nil, preferredCurrency: Currency? = nil, venmoUsername: String? = nil) {
         guard var profile = currentProfile else {
             print("⚠️ [ProfileManager] Cannot update profile - no current profile")
             return
@@ -89,6 +89,10 @@ class ProfileManager: ObservableObject {
         if let currency = preferredCurrency {
             print("👤 [ProfileManager] Updating preferred currency to: \(currency.rawValue)")
             profile.preferredCurrency = currency
+        }
+        if let venmoUsername = venmoUsername {
+            print("👤 [ProfileManager] Updating Venmo username to: \(venmoUsername)")
+            profile.venmoUsername = venmoUsername
         }
 
         currentProfile = profile
@@ -107,10 +111,18 @@ class ProfileManager: ObservableObject {
     @MainActor func updateProfile(profile: UserProfile) {
         print("👤 [ProfileManager] Updating profile: \(profile.name)")
         print("👤 [ProfileManager] Trip codes: \(profile.tripCodes)")
+        print("👤 [ProfileManager] Venmo username: \(profile.venmoUsername ?? "not set")")
         currentProfile = profile
 
-        // Don't auto-sync to Firestore here - only sync explicitly when needed
-        // This prevents sync loops and race conditions
+        // Sync profile changes to Firestore
+        Task {
+            do {
+                try await FirebaseManager.shared.saveUserProfile(profile)
+                print("✅ [ProfileManager] Profile changes synced to Firestore")
+            } catch {
+                print("❌ [ProfileManager] Failed to sync profile to Firestore: \(error)")
+            }
+        }
     }
 
     @MainActor func updateProfileWithFirebaseUID(_ firebaseUID: String) {

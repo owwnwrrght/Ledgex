@@ -13,20 +13,21 @@ struct UserProfile: Codable {
     var pushToken: String? = nil
     var notificationsEnabled: Bool = true
 
-    // Payment integrations
-    var linkedPaymentAccounts: [LinkedPaymentAccount] = []
-    var defaultPaymentProvider: PaymentProvider?
+    // Venmo payment integration
+    var venmoUsername: String? = nil
 
     init(name: String, firebaseUID: String? = nil) {
         self.name = name
         self.firebaseUID = firebaseUID
     }
 
-    func paymentAccount(for provider: PaymentProvider) -> LinkedPaymentAccount? {
-        return linkedPaymentAccounts.first(where: { $0.provider == provider && $0.isVerified })
+    var hasVenmoLinked: Bool {
+        return venmoUsername != nil && !venmoUsername!.isEmpty
     }
 
-    var hasLinkedPaymentAccounts: Bool {
-        return !linkedPaymentAccounts.filter({ $0.isVerified }).isEmpty
+    var formattedVenmoUsername: String? {
+        guard let username = venmoUsername, !username.isEmpty else { return nil }
+        // Ensure it starts with @
+        return username.hasPrefix("@") ? username : "@\(username)"
     }
 }

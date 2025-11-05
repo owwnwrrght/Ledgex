@@ -2,7 +2,6 @@ import SwiftUI
 
 struct SettlementsView: View {
     @ObservedObject var viewModel: ExpenseViewModel
-    @State private var showingPaymentMethods = false
 
     var body: some View {
         List {
@@ -52,6 +51,8 @@ struct SettlementsView: View {
                         SettlementRow(
                             settlement: settlement,
                             baseCurrency: viewModel.trip.baseCurrency,
+                            tripName: viewModel.trip.name,
+                            tripCode: viewModel.trip.code,
                             canToggleReceived: viewModel.canToggleSettlementReceived(settlement)
                         ) {
                             Task {
@@ -62,41 +63,29 @@ struct SettlementsView: View {
                 } header: {
                     Text("Payments")
                 } footer: {
-                    Text("Tap any payment to initiate instant transfer via your linked payment apps")
+                    Text("Tap any payment to open Venmo with pre-filled payment details. Both you and the recipient must have Venmo usernames linked.")
                 }
             }
         }
         .navigationTitle("Settle Up")
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingPaymentMethods = true
-                } label: {
-                    Image(systemName: "creditcard.and.123")
-                }
-            }
-        }
-        .sheet(isPresented: $showingPaymentMethods) {
-            PaymentMethodsView()
-        }
     }
 }
 
 struct SettlementRow: View {
     let settlement: Settlement
     let baseCurrency: Currency
+    let tripName: String
+    let tripCode: String
     let canToggleReceived: Bool
     let toggleReceived: () -> Void
 
     @ObservedObject private var paymentService = PaymentService.shared
     @ObservedObject private var profileManager = ProfileManager.shared
-    @State private var showingPaymentOptions = false
-    @State private var showingNoAccountsAlert = false
-    @State private var selectedProvider: PaymentProvider?
+    @State private var showingNoVenmoAlert = false
     @State private var isProcessingPayment = false
     @State private var paymentError: String?
-    @State private var matchedPaymentMethods: [PaymentMatch] = []
-    @State private var isLoadingMatches = false
+    @State private var recipientVenmoUsername: String?
+    @State private var isCheckingVenmo = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -147,23 +136,19 @@ struct SettlementRow: View {
         .contentShape(Rectangle())
         .onTapGesture {
             if !settlement.isReceived && canInitiatePayment {
-                if hasLinkedAccounts {
-                    Task {
-                        await loadMatchedPaymentMethods()
-                    }
-                    showingPaymentOptions = true
-                } else {
-                    showingNoAccountsAlert = true
+                Task {
+                    await checkVenmoAndPay()
                 }
             }
         }
-        .confirmationDialog("Choose Payment Method", isPresented: $showingPaymentOptions, titleVisibility: .visible) {
-            paymentOptionsDialog
-        }
-        .alert("No Payment Methods Linked", isPresented: $showingNoAccountsAlert) {
+        .alert("Venmo Not Set Up", isPresented: $showingNoVenmoAlert) {
             Button("OK") {}
         } message: {
-            Text("To pay via Venmo, Zelle, or other apps, tap the card icon (💳) at the top right to link your payment accounts first.")
+            if !hasVenmoUsername {
+                Text("To pay via Venmo, go to your profile settings and add your Venmo username first.")
+            } else {
+                Text("The recipient hasn't linked their Venmo username yet. Ask them to add it in their profile settings.")
+            }
         }
     }
 
@@ -184,20 +169,19 @@ struct SettlementRow: View {
 
     @ViewBuilder
     private var actionButtons: some View {
-        if isProcessingPayment {
+        if isProcessingPayment || isCheckingVenmo {
             ProgressView()
         } else if !settlement.isReceived {
-            if canInitiatePayment && hasLinkedAccounts {
+            if canInitiatePayment && hasVenmoUsername {
                 Button {
                     Task {
-                        await loadMatchedPaymentMethods()
+                        await checkVenmoAndPay()
                     }
-                    showingPaymentOptions = true
                 } label: {
                     HStack(spacing: 6) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.body)
-                        Text("Pay Now")
+                        Text("Pay via Venmo")
                             .font(.subheadline)
                             .fontWeight(.medium)
                     }
@@ -228,42 +212,6 @@ struct SettlementRow: View {
         }
     }
 
-    @ViewBuilder
-    private var paymentOptionsDialog: some View {
-        // Show matched payment methods first (common between both users)
-        if !matchedPaymentMethods.isEmpty {
-            ForEach(matchedPaymentMethods) { match in
-                if paymentService.isProviderAvailable(match.provider) {
-                    Button {
-                        initiatePaymentWithMatch(match)
-                    } label: {
-                        if match == matchedPaymentMethods.first {
-                            Label("Pay \(match.recipientAccount.formattedIdentifier) via \(match.provider.displayName) ⭐", systemImage: "bolt.fill")
-                        } else {
-                            Text("Pay \(match.recipientAccount.formattedIdentifier) via \(match.provider.displayName)")
-                        }
-                    }
-                }
-            }
-        } else {
-            // Fallback: Show user's own payment methods (old behavior)
-            ForEach(availablePaymentProviders, id: \.self) { provider in
-                if let account = profileManager.currentProfile?.paymentAccount(for: provider) {
-                    Button {
-                        initiatePayment(with: provider, payerAccount: account, recipientAccount: nil)
-                    } label: {
-                        Text("Pay with \(provider.displayName)")
-                    }
-                }
-            }
-        }
-
-        Button("Mark as Paid Manually", role: .none) {
-            toggleReceived()
-        }
-
-        Button("Cancel", role: .cancel) {}
-    }
 
     @ViewBuilder
     private func errorBanner(_ message: String) -> some View {
@@ -287,86 +235,83 @@ struct SettlementRow: View {
         return settlement.from.id == profile.id
     }
 
-    private var hasLinkedAccounts: Bool {
-        return profileManager.currentProfile?.hasLinkedPaymentAccounts ?? false
+    private var hasVenmoUsername: Bool {
+        return profileManager.currentProfile?.hasVenmoLinked ?? false
     }
 
-    private var availablePaymentProviders: [PaymentProvider] {
-        guard let accounts = profileManager.currentProfile?.linkedPaymentAccounts else {
-            return []
-        }
-        return accounts
-            .filter { $0.isVerified && paymentService.isProviderAvailable($0.provider) }
-            .map { $0.provider }
-    }
+    // MARK: - Payment Actions
 
-    // MARK: - Payment Action
-
-    /// Load matched payment methods between payer and recipient
-    private func loadMatchedPaymentMethods() async {
+    /// Check if both parties have Venmo and initiate payment
+    private func checkVenmoAndPay() async {
         guard let profile = profileManager.currentProfile else { return }
 
-        isLoadingMatches = true
-        matchedPaymentMethods = await paymentService.findMatchedPaymentMethods(
+        // Check if user has Venmo
+        guard profile.hasVenmoLinked else {
+            await MainActor.run {
+                showingNoVenmoAlert = true
+            }
+            return
+        }
+
+        // Check if recipient has Venmo
+        await MainActor.run {
+            isCheckingVenmo = true
+        }
+
+        let (canPay, recipientUsername) = await paymentService.canPayViaVenmo(
             payer: profile,
             recipientFirebaseUID: settlement.to.firebaseUID
         )
-        isLoadingMatches = false
 
-        if !matchedPaymentMethods.isEmpty {
-            print("✅ Found \(matchedPaymentMethods.count) matched payment methods")
-        } else {
-            print("⚠️ No common payment methods found")
-        }
-    }
+        await MainActor.run {
+            isCheckingVenmo = false
 
-    /// Initiate payment with a matched payment method
-    private func initiatePaymentWithMatch(_ match: PaymentMatch) {
-        isProcessingPayment = true
-        paymentError = nil
-
-        Task {
-            let result = await paymentService.initiatePayment(
-                settlement: settlement,
-                provider: match.provider,
-                recipientAccount: match.recipientAccount
-            )
-
-            await MainActor.run {
-                isProcessingPayment = false
-
-                if result.success {
-                    // Auto-mark as received after successful payment initiation
-                    toggleReceived()
-                } else if let error = result.error {
-                    paymentError = error.localizedDescription
+            if canPay, let username = recipientUsername {
+                // Both have Venmo - initiate payment
+                recipientVenmoUsername = username
+                Task {
+                    await initiateVenmoPayment(recipientUsername: username)
                 }
+            } else {
+                // Recipient doesn't have Venmo
+                showingNoVenmoAlert = true
             }
         }
     }
 
-    /// Initiate payment with a specific provider and accounts
-    private func initiatePayment(with provider: PaymentProvider, payerAccount: LinkedPaymentAccount, recipientAccount: LinkedPaymentAccount?) {
+    /// Initiate Venmo payment with deep link
+    private func initiateVenmoPayment(recipientUsername: String) async {
         isProcessingPayment = true
         paymentError = nil
 
-        Task {
-            let result = await paymentService.initiatePayment(
-                settlement: settlement,
-                provider: provider,
-                recipientAccount: recipientAccount
-            )
+        let result = await paymentService.initiateVenmoPayment(
+            settlement: settlement,
+            recipientVenmoUsername: recipientUsername,
+            currency: baseCurrency
+        )
 
-            await MainActor.run {
-                isProcessingPayment = false
+        await MainActor.run {
+            isProcessingPayment = false
 
-                if result.success {
-                    // Auto-mark as received after successful payment initiation
-                    toggleReceived()
-                } else if let error = result.error {
-                    paymentError = error.localizedDescription
-                }
+            if result.success {
+                // Send notification that payment was initiated
+                sendPaymentInitiatedNotification()
+
+                // Auto-mark as received after successful payment initiation
+                toggleReceived()
+            } else if let error = result.error {
+                paymentError = error.localizedDescription
             }
         }
+    }
+
+    private func sendPaymentInitiatedNotification() {
+        let amount = CurrencyAmount(amount: settlement.amount, currency: baseCurrency).formatted()
+        let notification = NotificationService.NotificationType.paymentInitiated(
+            tripName: tripName,
+            recipientName: settlement.to.name,
+            amount: amount
+        )
+        NotificationService.shared.sendTripNotification(notification, tripCode: tripCode)
     }
 }

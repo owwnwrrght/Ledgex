@@ -1,19 +1,34 @@
 import SwiftUI
 
+enum TripDetailTab: Int, Hashable {
+    case people = 0
+    case expenses = 1
+    case settlements = 2
+
+    init?(destination: NotificationService.NotificationDestination) {
+        switch destination {
+        case .people: self = .people
+        case .expenses: self = .expenses
+        case .settlements: self = .settlements
+        }
+    }
+}
+
 struct TripDetailView: View {
     let trip: Trip
     let tripListViewModel: TripListViewModel
     @StateObject private var viewModel: ExpenseViewModel
-    @State private var selectedTab = 0
+    @State private var selectedTab: TripDetailTab
     @State private var showingShareSheet = false
     @State private var showingAddExpense = false
     @State private var showingFlagPicker = false
     @State private var showingSettings = false
     
-    init(trip: Trip, tripListViewModel: TripListViewModel) {
+    init(trip: Trip, tripListViewModel: TripListViewModel, initialTab: TripDetailTab = .people) {
         self.trip = trip
         self.tripListViewModel = tripListViewModel
         self._viewModel = StateObject(wrappedValue: ExpenseViewModel(trip: trip, dataStore: FirebaseManager.shared, tripListViewModel: tripListViewModel))
+        self._selectedTab = State(initialValue: initialTab)
     }
     
     var body: some View {
@@ -26,19 +41,19 @@ struct TripDetailView: View {
                     .tabItem {
                         Label("People", systemImage: "person.3")
                     }
-                    .tag(0)
+                    .tag(TripDetailTab.people)
 
                 ExpensesView(viewModel: viewModel)
                     .tabItem {
                         Label("Expenses", systemImage: "dollarsign.circle")
                     }
-                    .tag(1)
+                    .tag(TripDetailTab.expenses)
 
                 SettlementsView(viewModel: viewModel)
                     .tabItem {
                         Label("Settle Up", systemImage: viewModel.allParticipantsConfirmed ? "arrow.left.arrow.right" : "clock")
                     }
-                    .tag(2)
+                    .tag(TripDetailTab.settlements)
             }
         }
         .navigationTitle(viewModel.trip.name)
@@ -53,7 +68,7 @@ struct TripDetailView: View {
                 }
             }
             ToolbarItemGroup(placement: .navigationBarTrailing) {
-                if selectedTab == 1 { // Expenses tab
+                if selectedTab == .expenses {
                     Button(action: {
                         showingAddExpense = true
                     }) {
@@ -89,9 +104,17 @@ struct TripDetailView: View {
         .sheet(isPresented: $showingSettings) {
             TripSettingsView(viewModel: viewModel)
         }
-
         .refreshable {
             await viewModel.refreshFromCloud()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSNotification.Name("OpenTripFromNotification"))) { notification in
+            guard let tripCode = notification.userInfo?["tripCode"] as? String,
+                  tripCode == viewModel.trip.code else { return }
+            if let rawDestination = notification.userInfo?["destinationTab"] as? String,
+               let destination = NotificationService.NotificationDestination(rawValue: rawDestination),
+               let tab = TripDetailTab(destination: destination) {
+                selectedTab = tab
+            }
         }
     }
 

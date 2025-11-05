@@ -1,6 +1,5 @@
 import Foundation
 import UIKit
-import PassKit
 import Combine
 
 // MARK: - Payment Service Errors
@@ -53,27 +52,22 @@ class PaymentService: NSObject, ObservableObject {
     @Published var lastPaymentResult: PaymentResult?
 
     private var profileManager = ProfileManager.shared
-    private var pkPaymentController: PKPaymentAuthorizationController?
-    private var paymentMatchingService = PaymentMatchingService.shared
     private var firebaseManager = FirebaseManager.shared
 
-    private override init() {}
+    private override init() {
+        super.init()
+    }
 
     // MARK: - Provider Availability Checks
 
     func isProviderAvailable(_ provider: PaymentProvider) -> Bool {
         switch provider {
-        case .applePay:
-            return PKPaymentAuthorizationController.canMakePayments()
         case .venmo:
-            return canOpenURL(urlString: "venmo://")
-        case .paypal:
-            // PayPal SDK would be checked here
-            return true // Always available via web fallback
-        case .zelle:
-            return canOpenURL(urlString: "zelle://")
-        case .cashApp:
-            return canOpenURL(urlString: "cashapp://")
+            // Check if Venmo app is installed
+            if let url = URL(string: "venmo://") {
+                return UIApplication.shared.canOpenURL(url)
+            }
+            return false
         case .manual:
             return true
         }
@@ -83,270 +77,198 @@ class PaymentService: NSObject, ObservableObject {
         return PaymentProvider.allCases.filter { isProviderAvailable($0) }
     }
 
-    private func canOpenURL(urlString: String) -> Bool {
-        guard let url = URL(string: urlString) else { return false }
-        return UIApplication.shared.canOpenURL(url)
-    }
+    // MARK: - Venmo Username Checking
 
-    // MARK: - Auto-Matching Payment Methods
-
-    /// Find common payment methods between payer and recipient
-    /// Returns matches sorted by preference
-    func findMatchedPaymentMethods(
+    /// Check if both payer and recipient have Venmo usernames linked
+    func canPayViaVenmo(
         payer: UserProfile,
         recipientFirebaseUID: String?
-    ) async -> [PaymentMatch] {
+    ) async -> (canPay: Bool, recipientUsername: String?) {
+        // Check if payer has Venmo
+        guard payer.hasVenmoLinked else {
+            print("⚠️ Payer has no Venmo username linked")
+            return (false, nil)
+        }
+
+        // Check if recipient has Venmo
         guard let recipientUID = recipientFirebaseUID else {
-            print("⚠️ Cannot find matches - recipient has no Firebase UID")
-            return []
+            print("⚠️ Recipient has no Firebase UID")
+            return (false, nil)
         }
 
         do {
             guard let recipientProfile = try await firebaseManager.fetchUserProfile(byFirebaseUID: recipientUID) else {
-                print("⚠️ Cannot find matches - recipient profile not found")
-                return []
+                print("⚠️ Recipient profile not found")
+                return (false, nil)
             }
 
-            return paymentMatchingService.findCommonPaymentMethods(
-                payer: payer,
-                recipient: recipientProfile
-            )
-        } catch {
-            print("❌ Error finding payment matches: \(error)")
-            return []
-        }
-    }
+            guard let recipientVenmo = recipientProfile.venmoUsername, !recipientVenmo.isEmpty else {
+                print("⚠️ Recipient has no Venmo username linked")
+                return (false, nil)
+            }
 
-    /// Find the best payment method for a settlement
-    func findBestPaymentMatch(
-        payer: UserProfile,
-        recipientFirebaseUID: String?
-    ) async -> PaymentMatch? {
-        let matches = await findMatchedPaymentMethods(payer: payer, recipientFirebaseUID: recipientFirebaseUID)
-        return matches.first
+            return (true, recipientVenmo)
+        } catch {
+            print("❌ Error checking recipient Venmo: \(error)")
+            return (false, nil)
+        }
     }
 
     // MARK: - Main Payment Flow
 
-    func initiatePayment(
+    func initiateVenmoPayment(
         settlement: Settlement,
-        provider: PaymentProvider,
-        recipientAccount: LinkedPaymentAccount?
+        recipientVenmoUsername: String,
+        currency: Currency
     ) async -> PaymentResult {
         isProcessingPayment = true
         defer { isProcessingPayment = false }
 
         // Validate amount
         guard settlement.amount > 0 else {
-            return PaymentResult(success: false, transactionId: nil, error: .invalidAmount, provider: provider)
+            return PaymentResult(success: false, transactionId: nil, error: .invalidAmount, provider: .venmo)
         }
 
-        // Check if provider is available
-        guard isProviderAvailable(provider) else {
-            return PaymentResult(success: false, transactionId: nil, error: .providerNotAvailable, provider: provider)
+        // Check if Venmo is available
+        guard isProviderAvailable(.venmo) else {
+            return PaymentResult(success: false, transactionId: nil, error: .providerNotAvailable, provider: .venmo)
         }
 
-        // Route to appropriate provider
-        let result: PaymentResult
-        switch provider {
-        case .applePay:
-            result = await processApplePayCash(settlement: settlement)
-        case .venmo:
-            result = await processVenmoPayment(settlement: settlement, recipientAccount: recipientAccount)
-        case .paypal:
-            result = await processPayPalPayment(settlement: settlement, recipientAccount: recipientAccount)
-        case .zelle:
-            result = await processZellePayment(settlement: settlement, recipientAccount: recipientAccount)
-        case .cashApp:
-            result = await processCashAppPayment(settlement: settlement, recipientAccount: recipientAccount)
-        case .manual:
-            result = PaymentResult(success: true, transactionId: UUID().uuidString, error: nil, provider: provider)
-        }
+        // Process Venmo payment
+        let result = await processVenmoPayment(
+            settlement: settlement,
+            recipientUsername: recipientVenmoUsername,
+            currency: currency
+        )
 
         lastPaymentResult = result
 
         // Log transaction
         if result.success {
-            await recordPaymentTransaction(settlement: settlement, result: result)
+            await recordPaymentTransaction(settlement: settlement, result: result, currency: currency)
         }
 
         return result
     }
 
-    // MARK: - Apple Pay Cash Implementation
+    // MARK: - Venmo Deep Link Payment
 
-    private func processApplePayCash(settlement: Settlement) async -> PaymentResult {
-        // Check if Apple Pay is set up
-        guard PKPaymentAuthorizationController.canMakePayments(usingNetworks: [.visa, .masterCard, .amex, .discover]) else {
-            return PaymentResult(success: false, transactionId: nil, error: .providerNotAvailable, provider: .applePay)
+    private func processVenmoPayment(
+        settlement: Settlement,
+        recipientUsername: String,
+        currency: Currency
+    ) async -> PaymentResult {
+        // Prepare payment details
+        let username = recipientUsername.replacingOccurrences(of: "@", with: "")
+        let note = "Ledgex: \(settlement.from.name) → \(settlement.to.name)"
+        let amountString = formattedVenmoAmount(from: settlement.amount)
+
+        guard let amountString else {
+            return PaymentResult(
+                success: false,
+                transactionId: nil,
+                error: .transactionFailed("Invalid payment amount"),
+                provider: .venmo
+            )
         }
 
-        // Create payment request
-        let request = PKPaymentRequest()
-        request.merchantIdentifier = "merchant.com.ledgex.app" // Replace with actual merchant ID
-        request.countryCode = "US"
-        request.currencyCode = settlement.amount as NSDecimalNumber == 0 ? "USD" : "USD" // Use settlement currency
-        request.supportedNetworks = [.visa, .masterCard, .amex, .discover]
-        request.merchantCapabilities = .capability3DS
+        // Construct the Venmo deep link using URLComponents to ensure proper encoding
+        var components = URLComponents()
+        components.scheme = "venmo"
+        components.host = "paycharge"
+        components.queryItems = [
+            URLQueryItem(name: "txn", value: "pay"),
+            URLQueryItem(name: "recipients", value: username),
+            URLQueryItem(name: "amount", value: amountString),
+            URLQueryItem(name: "note", value: note),
+            URLQueryItem(name: "audience", value: "private")
+        ]
 
-        // Create payment summary item
-        let paymentItem = PKPaymentSummaryItem(
-            label: "Payment to \(settlement.to.name)",
-            amount: settlement.amount as NSDecimalNumber
-        )
-        request.paymentSummaryItems = [paymentItem]
+        guard let venmoURL = components.url else {
+            return PaymentResult(
+                success: false,
+                transactionId: nil,
+                error: .transactionFailed("Unable to create Venmo payment link"),
+                provider: .venmo
+            )
+        }
 
-        return await withCheckedContinuation { continuation in
-            pkPaymentController = PKPaymentAuthorizationController(paymentRequest: request)
-            pkPaymentController?.delegate = self
+        // Check if Venmo is installed
+        guard UIApplication.shared.canOpenURL(venmoURL) else {
+            return PaymentResult(
+                success: false,
+                transactionId: nil,
+                error: .providerNotAvailable,
+                provider: .venmo
+            )
+        }
 
-            pkPaymentController?.present { presented in
-                if !presented {
-                    continuation.resume(returning: PaymentResult(
-                        success: false,
-                        transactionId: nil,
-                        error: .providerNotAvailable,
-                        provider: .applePay
-                    ))
-                }
-            }
+        // Open Venmo with pre-filled payment details
+        let opened = await UIApplication.shared.open(venmoURL)
+
+        if opened {
+            // Generate a transaction ID for tracking
+            // Note: This is a "fire and forget" - we won't get confirmation from Venmo
+            let transactionId = UUID().uuidString
+
+            print("✅ Venmo opened successfully")
+            print("   Amount: \(amountString) \(currency.rawValue)")
+            print("   Recipient: @\(username)")
+            print("   Note: \(note)")
+
+            return PaymentResult(
+                success: true,
+                transactionId: transactionId,
+                error: nil,
+                provider: .venmo
+            )
+        } else {
+            return PaymentResult(
+                success: false,
+                transactionId: nil,
+                error: .providerNotAvailable,
+                provider: .venmo
+            )
         }
     }
 
-    // MARK: - Venmo Deep Link Implementation
+    private func formattedVenmoAmount(from amount: Decimal) -> String? {
+        let number = NSDecimalNumber(decimal: amount)
+        guard number.doubleValue > 0 else { return nil }
 
-    private func processVenmoPayment(settlement: Settlement, recipientAccount: LinkedPaymentAccount?) async -> PaymentResult {
-        guard let recipientAccount = recipientAccount else {
-            return PaymentResult(success: false, transactionId: nil, error: .accountNotLinked, provider: .venmo)
-        }
+        let formatter = NumberFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.numberStyle = .decimal
+        formatter.minimumFractionDigits = 2
+        formatter.maximumFractionDigits = 2
+        formatter.usesGroupingSeparator = false
 
-        // Venmo deep link format: venmo://paycharge?txn=pay&recipients=USERNAME&amount=AMOUNT&note=NOTE
-        let username = recipientAccount.accountIdentifier.replacingOccurrences(of: "@", with: "")
-        let amount = (settlement.amount as NSDecimalNumber).doubleValue
-        let note = "Ledgex settlement: \(settlement.from.name) → \(settlement.to.name)"
-        let encodedNote = note.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-
-        let venmoURLString = "venmo://paycharge?txn=pay&recipients=\(username)&amount=\(amount)&note=\(encodedNote)"
-
-        guard let url = URL(string: venmoURLString) else {
-            return PaymentResult(success: false, transactionId: nil, error: .transactionFailed("Invalid URL"), provider: .venmo)
-        }
-
-        if await UIApplication.shared.open(url) {
-            // Venmo was opened successfully - we can't track completion, so return pending
-            return PaymentResult(success: true, transactionId: UUID().uuidString, error: nil, provider: .venmo)
-        } else {
-            return PaymentResult(success: false, transactionId: nil, error: .providerNotAvailable, provider: .venmo)
-        }
-    }
-
-    // MARK: - PayPal Implementation
-
-    private func processPayPalPayment(settlement: Settlement, recipientAccount: LinkedPaymentAccount?) async -> PaymentResult {
-        // TODO: Integrate PayPal SDK
-        // For now, use web-based flow or deep link
-
-        guard let recipientAccount = recipientAccount else {
-            return PaymentResult(success: false, transactionId: nil, error: .accountNotLinked, provider: .paypal)
-        }
-
-        // PayPal.me link format: https://www.paypal.me/username/amount
-        let username = recipientAccount.accountIdentifier
-        let amount = (settlement.amount as NSDecimalNumber).doubleValue
-        let paypalURLString = "https://www.paypal.me/\(username)/\(amount)"
-
-        guard let url = URL(string: paypalURLString) else {
-            return PaymentResult(success: false, transactionId: nil, error: .transactionFailed("Invalid URL"), provider: .paypal)
-        }
-
-        if await UIApplication.shared.open(url) {
-            return PaymentResult(success: true, transactionId: UUID().uuidString, error: nil, provider: .paypal)
-        } else {
-            return PaymentResult(success: false, transactionId: nil, error: .providerNotAvailable, provider: .paypal)
-        }
-    }
-
-    // MARK: - Zelle Deep Link Implementation
-
-    private func processZellePayment(settlement: Settlement, recipientAccount: LinkedPaymentAccount?) async -> PaymentResult {
-        guard let recipientAccount = recipientAccount else {
-            return PaymentResult(success: false, transactionId: nil, error: .accountNotLinked, provider: .zelle)
-        }
-
-        // Zelle deep link format: zelle://send?amount=AMOUNT&email=EMAIL&note=NOTE
-        let amount = (settlement.amount as NSDecimalNumber).doubleValue
-        let email = recipientAccount.accountIdentifier
-        let note = "Ledgex settlement"
-        let encodedEmail = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-        let encodedNote = note.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? ""
-
-        let zelleURLString = "zelle://send?amount=\(amount)&email=\(encodedEmail)&note=\(encodedNote)"
-
-        guard let url = URL(string: zelleURLString) else {
-            return PaymentResult(success: false, transactionId: nil, error: .transactionFailed("Invalid URL"), provider: .zelle)
-        }
-
-        if await UIApplication.shared.open(url) {
-            return PaymentResult(success: true, transactionId: UUID().uuidString, error: nil, provider: .zelle)
-        } else {
-            return PaymentResult(success: false, transactionId: nil, error: .providerNotAvailable, provider: .zelle)
-        }
-    }
-
-    // MARK: - Cash App Deep Link Implementation
-
-    private func processCashAppPayment(settlement: Settlement, recipientAccount: LinkedPaymentAccount?) async -> PaymentResult {
-        guard let recipientAccount = recipientAccount else {
-            return PaymentResult(success: false, transactionId: nil, error: .accountNotLinked, provider: .cashApp)
-        }
-
-        // Cash App deep link format: cashapp://cash.app/$CASHTAG/AMOUNT
-        let cashtag = recipientAccount.accountIdentifier.replacingOccurrences(of: "$", with: "")
-        let amount = (settlement.amount as NSDecimalNumber).doubleValue
-        let cashAppURLString = "cashapp://cash.app/$\(cashtag)/\(amount)"
-
-        guard let url = URL(string: cashAppURLString) else {
-            return PaymentResult(success: false, transactionId: nil, error: .transactionFailed("Invalid URL"), provider: .cashApp)
-        }
-
-        if await UIApplication.shared.open(url) {
-            return PaymentResult(success: true, transactionId: UUID().uuidString, error: nil, provider: .cashApp)
-        } else {
-            return PaymentResult(success: false, transactionId: nil, error: .providerNotAvailable, provider: .cashApp)
-        }
+        return formatter.string(from: number)
     }
 
     // MARK: - Transaction Recording
 
-    private func recordPaymentTransaction(settlement: Settlement, result: PaymentResult) async {
-        let transaction = PaymentTransaction(
+    private func recordPaymentTransaction(settlement: Settlement, result: PaymentResult, currency: Currency) async {
+        var transaction = PaymentTransaction(
             settlementId: settlement.id,
             provider: result.provider,
             amount: settlement.amount,
-            currency: .USD, // Use settlement's currency
+            currency: currency, // Use settlement's currency
             fromUserId: settlement.from.id,
             toUserId: settlement.to.id
         )
+        transaction.status = result.success ? .completed : .failed
+        transaction.externalTransactionId = result.transactionId
+        transaction.errorMessage = result.error?.localizedDescription
+        transaction.updatedAt = Date()
+        if result.success {
+            transaction.completedAt = Date()
+        }
 
-        // TODO: Save to Firestore via FirebaseManager
-        print("💳 Payment transaction recorded: \(transaction.id)")
-    }
-}
-
-// MARK: - Apple Pay Delegate
-extension PaymentService: PKPaymentAuthorizationControllerDelegate {
-    nonisolated func paymentAuthorizationController(
-        _ controller: PKPaymentAuthorizationController,
-        didAuthorizePayment payment: PKPayment,
-        handler completion: @escaping (PKPaymentAuthorizationResult) -> Void
-    ) {
-        // Process the payment
-        // In a real implementation, you would send this to your backend
-        let result = PKPaymentAuthorizationResult(status: .success, errors: nil)
-        completion(result)
-    }
-
-    nonisolated func paymentAuthorizationControllerDidFinish(_ controller: PKPaymentAuthorizationController) {
-        controller.dismiss()
+        do {
+            try await firebaseManager.savePaymentTransaction(transaction)
+        } catch {
+            print("❌ Failed to record payment transaction: \(error)")
+        }
     }
 }
